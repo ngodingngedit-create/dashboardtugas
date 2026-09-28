@@ -1,0 +1,107 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import { createAstroSupabaseClient } from '../../lib/supabase';
+import { ensureUserProfile } from '../../lib/auth-helpers';
+
+const supabase = createAstroSupabaseClient(Astro.request, Astro.cookies);
+const { token } = Astro.params;
+
+const { data: { user } } = await supabase.auth.getUser();
+
+// Jika belum login, redirect ke login dan simpan tujuan redirect
+if (!user) {
+  return Astro.redirect(`/login?redirect=/join/${token}`);
+}
+
+await ensureUserProfile(supabase, user);
+
+// Cari data invite berdasarkan token
+const { data: invite, error: inviteError } = await supabase
+  .from('workspace_invites')
+  .select(`
+    *,
+    workspace:workspaces (*),
+    inviter:profiles!workspace_invites_invited_by_fkey (*)
+  `)
+  .eq('token', token)
+  .single();
+
+let errorMessage: string | null = null;
+let successWorkspaceId: string | null = null;
+
+if (inviteError || !invite) {
+  errorMessage = 'Tautan undangan tidak valid atau sudah dihapus.';
+} else if (new Date(invite.expires_at) < new Date()) {
+  errorMessage = 'Tautan undangan ini sudah kedaluwarsa.';
+} else {
+  // Cek apakah user sudah terdaftar di workspace tersebut
+  const { data: existingMember } = await supabase
+    .from('workspace_members')
+    .select('id, role')
+    .eq('workspace_id', invite.workspace_id)
+    .eq('user_id', user.id)
+    .single();
+
+  if (existingMember) {
+    // Sudah bergabung, langsung arahkan ke dashboard
+    return Astro.redirect(`/dashboard?workspace_id=${invite.workspace_id}`);
+  }
+
+  // Masukkan user ke workspace_members
+  const { error: joinError } = await supabase
+    .from('workspace_members')
+    .insert({
+      workspace_id: invite.workspace_id,
+      user_id: user.id,
+      role: invite.role,
+    });
+
+  if (joinError) {
+    errorMessage = `Gagal bergabung: ${joinError.message}`;
+  } else {
+    successWorkspaceId = invite.workspace_id;
+  }
+}
+---
+
+<BaseLayout title="Undangan Workspace - TaskPilot">
+  <div class="min-h-screen flex items-center justify-center p-4 bg-slate-50">
+    <div class="w-full max-w-md bg-white rounded-3xl shadow-xl border border-slate-100 p-8 text-center">
+      <div class="w-16 h-16 rounded-2xl mx-auto flex items-center justify-center text-3xl mb-4 bg-indigo-50 shadow-inner">
+        {errorMessage ? '⚠️' : '🎉'}
+      </div>
+
+      {errorMessage ? (
+        <div>
+          <h1 class="text-xl font-extrabold text-slate-800 mb-2">Undangan Tidak Valid</h1>
+          <p class="text-sm text-slate-500 mb-6">{errorMessage}</p>
+          <a
+            href="/dashboard"
+            class="inline-block px-5 py-2.5 bg-slate-800 hover:bg-slate-900 text-white font-semibold text-xs rounded-xl transition"
+          >
+            Kembali ke Dashboard
+          </a>
+        </div>
+      ) : (
+        <div>
+          <span class="text-[10px] font-bold uppercase tracking-wider text-indigo-600 bg-indigo-50 px-2.5 py-1 rounded-full inline-block mb-3">
+            Undangan Berhasil Diterima
+          </span>
+          <h1 class="text-xl font-extrabold text-slate-800 mb-2">
+            Selamat Datang di {invite.workspace?.name}!
+          </h1>
+          <p class="text-xs text-slate-500 mb-6">
+            Anda telah bergabung sebagai <b class="capitalize text-slate-700">{invite.role}</b> atas undangan dari <b>{invite.inviter?.full_name || 'Project Manager'}</b>.
+          </p>
+
+          <a
+            href={`/dashboard?workspace_id=${successWorkspaceId}`}
+            class="block w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm rounded-xl transition shadow-md shadow-indigo-200"
+          >
+            Buka Board Workspace &rarr;
+          </a>
+        </div>
+      )}
+    </div>
+  </div>
+</BaseLayout>

@@ -1,0 +1,287 @@
+---
+import DashboardLayout from '../../layouts/DashboardLayout.astro';
+import { createAstroSupabaseClient } from '../../lib/supabase';
+import type { Workspace } from '../../types/database';
+
+const supabase = createAstroSupabaseClient(Astro.request, Astro.cookies);
+const { data: { user } } = await supabase.auth.getUser();
+
+const { data: profile } = await supabase
+  .from('profiles')
+  .select('*')
+  .eq('id', user?.id)
+  .single();
+
+const { data: memberWorkspaces } = await supabase
+  .from('workspace_members')
+  .select('workspace:workspaces (*)')
+  .eq('user_id', user?.id);
+
+const workspaces: Workspace[] = (memberWorkspaces || [])
+  .map((m: any) => m.workspace)
+  .filter(Boolean);
+
+const urlWorkspaceId = Astro.url.searchParams.get('workspace_id');
+let currentWorkspace = workspaces.find((w) => w.id === urlWorkspaceId) || workspaces[0] || null;
+
+let tasks: any[] = [];
+if (currentWorkspace) {
+  const { data: tasksData } = await supabase
+    .from('tasks')
+    .select(`
+      *,
+      creator:profiles!tasks_created_by_fkey (id, full_name, avatar_url),
+      subtasks (*)
+    `)
+    .eq('workspace_id', currentWorkspace.id)
+    .order('created_at', { ascending: false });
+
+  tasks = tasksData || [];
+}
+
+const statusColumns = [
+  { key: 'todo', label: 'To Do', color: 'bg-amber-500' },
+  { key: 'in_progress', label: 'In Progress', color: 'bg-blue-500' },
+  { key: 'review', label: 'Review', color: 'bg-purple-500' },
+  { key: 'done', label: 'Done', color: 'bg-emerald-500' },
+];
+---
+
+<DashboardLayout 
+  title="Kanban Board - TaskPilot" 
+  user={user} 
+  profile={profile} 
+  workspaces={workspaces}
+  currentWorkspace={currentWorkspace}
+>
+  <div slot="header-actions" class="flex items-center gap-3">
+    {currentWorkspace ? (
+      <button 
+        id="open-task-modal-btn"
+        class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs rounded-xl shadow-sm transition cursor-pointer"
+      >
+        + Tambah Tugas
+      </button>
+    ) : (
+      <a 
+        href="/dashboard/workspaces" 
+        class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs rounded-xl transition"
+      >
+        Buat Workspace Dulu
+      </a>
+    )}
+  </div>
+
+  {!currentWorkspace ? (
+    <div class="max-w-md mx-auto text-center py-16 bg-white rounded-2xl border border-slate-200 p-8 mt-12">
+      <div class="text-4xl mb-4">🚀</div>
+      <h3 class="text-lg font-bold text-slate-800">Mulai Buat Workspace</h3>
+      <p class="text-xs text-slate-400 mt-2 mb-6">
+        Anda belum memiliki workspace. Buat workspace pertama Anda untuk mulai mengatur tugas tim.
+      </p>
+      <a 
+        href="/dashboard/workspaces" 
+        class="inline-block px-5 py-2.5 bg-indigo-600 text-white font-bold text-xs rounded-xl hover:bg-indigo-700 transition"
+      >
+        Buat Workspace Sekarang
+      </a>
+    </div>
+  ) : (
+    <div class="grid grid-cols-1 md:grid-cols-4 gap-6 items-start">
+      {statusColumns.map((col) => {
+        const colTasks = tasks.filter((t) => t.status === col.key);
+        return (
+          <div class="bg-slate-100 rounded-2xl p-4 flex flex-col min-h-[500px]">
+            <div class="flex items-center justify-between mb-4 px-1">
+              <div class="flex items-center gap-2">
+                <span class={`w-2.5 h-2.5 rounded-full ${col.color}`}></span>
+                <h3 class="font-bold text-xs uppercase tracking-wider text-slate-700">{col.label}</h3>
+              </div>
+              <span class="text-xs font-bold text-slate-400 bg-slate-200 px-2 py-0.5 rounded-full">
+                {colTasks.length}
+              </span>
+            </div>
+
+            <div class="space-y-3 flex-1">
+              {colTasks.map((task) => {
+                const totalSub = task.subtasks?.length || 0;
+                const completedSub = task.subtasks?.filter((s: any) => s.is_completed).length || 0;
+                return (
+                  <div class="bg-white p-4 rounded-xl shadow-xs border border-slate-200 hover:shadow-md transition">
+                    <div class="flex items-center justify-between gap-2 mb-2">
+                      <span class={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-md ${
+                        task.priority === 'urgent' ? 'bg-rose-50 text-rose-600' :
+                        task.priority === 'high' ? 'bg-orange-50 text-orange-600' :
+                        task.priority === 'medium' ? 'bg-blue-50 text-blue-600' :
+                        'bg-slate-100 text-slate-600'
+                      }`}>
+                        {task.priority}
+                      </span>
+
+                      <select 
+                        class="task-status-select text-[11px] bg-transparent text-slate-400 hover:text-slate-600 font-medium cursor-pointer"
+                        data-task-id={task.id}
+                      >
+                        {statusColumns.map((c) => (
+                          <option value={c.key} selected={c.key === task.status}>
+                            Pindah: {c.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <a href={`/dashboard/task/${task.id}`} class="block font-bold text-sm text-slate-800 hover:text-indigo-600 transition mb-1">
+                      {task.title}
+                    </a>
+                    
+                    {task.description && (
+                      <p class="text-xs text-slate-500 line-clamp-2 mb-3">
+                        {task.description}
+                      </p>
+                    )}
+
+                    <div class="flex items-center justify-between pt-3 border-t border-slate-100 text-[11px] text-slate-400">
+                      {totalSub > 0 ? (
+                        <span>☑ {completedSub}/{totalSub}</span>
+                      ) : <span></span>}
+                      <span class="font-medium text-slate-600">
+                        {task.creator?.full_name?.split(' ')[0] || 'User'}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+
+              {colTasks.length === 0 && (
+                <div class="h-28 border-2 border-dashed border-slate-200 rounded-xl flex items-center justify-center text-xs text-slate-400">
+                  Kosong
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  )}
+
+  <!-- Modal Tambah Task -->
+  {currentWorkspace && (
+    <div id="task-modal" class="hidden fixed inset-0 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4 z-50">
+      <div class="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-100">
+        <h2 class="text-base font-bold text-slate-800 mb-4">Buat Tugas Baru</h2>
+        <form id="create-task-form" class="space-y-4">
+          <input type="hidden" name="workspace_id" value={currentWorkspace.id} />
+          
+          <div>
+            <label class="block text-xs font-semibold text-slate-600 uppercase mb-1">Judul Tugas</label>
+            <input 
+              type="text" 
+              name="title" 
+              required 
+              placeholder="Contoh: Implementasi Form Login" 
+              class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none"
+            />
+          </div>
+
+          <div>
+            <label class="block text-xs font-semibold text-slate-600 uppercase mb-1">Deskripsi</label>
+            <textarea 
+              name="description" 
+              rows="3" 
+              placeholder="Jelaskan kebutuhan tugas ini..." 
+              class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none"
+            ></textarea>
+          </div>
+
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="block text-xs font-semibold text-slate-600 uppercase mb-1">Prioritas</label>
+              <select name="priority" class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none">
+                <option value="low">Low</option>
+                <option value="medium" selected>Medium</option>
+                <option value="high">High</option>
+                <option value="urgent">Urgent</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-slate-600 uppercase mb-1">Tenggat Waktu</label>
+              <input type="date" name="due_date" class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none" />
+            </div>
+          </div>
+
+          <div class="flex justify-end gap-2 pt-2">
+            <button 
+              type="button" 
+              id="close-task-modal-btn"
+              class="px-4 py-2 text-xs font-semibold text-slate-500 hover:bg-slate-100 rounded-xl transition cursor-pointer"
+            >
+              Batal
+            </button>
+            <button 
+              type="submit" 
+              class="px-4 py-2 text-xs font-semibold bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl shadow-sm transition cursor-pointer"
+            >
+              Simpan Tugas
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )}
+
+  <script>
+    const openBtn = document.getElementById('open-task-modal-btn');
+    const closeBtn = document.getElementById('close-task-modal-btn');
+    const modal = document.getElementById('task-modal');
+    const form = document.getElementById('create-task-form') as HTMLFormElement;
+
+    openBtn?.addEventListener('click', () => modal?.classList.remove('hidden'));
+    closeBtn?.addEventListener('click', () => modal?.classList.add('hidden'));
+
+    form?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const formData = new FormData(form);
+      const payload = {
+        workspace_id: formData.get('workspace_id'),
+        title: formData.get('title'),
+        description: formData.get('description'),
+        priority: formData.get('priority'),
+        due_date: formData.get('due_date'),
+      };
+
+      const res = await fetch('/api/tasks', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+
+      if (res.ok) {
+        window.location.reload();
+      } else {
+        const data = await res.json();
+        alert(data.error || 'Gagal menyimpan tugas');
+      }
+    });
+
+    document.querySelectorAll('.task-status-select').forEach((select) => {
+      select.addEventListener('change', async (e) => {
+        const el = e.target as HTMLSelectElement;
+        const taskId = el.dataset.taskId;
+        const newStatus = el.value;
+
+        const res = await fetch(`/api/tasks/${taskId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status: newStatus }),
+        });
+
+        if (res.ok) {
+          window.location.reload();
+        } else {
+          alert('Gagal memindahkan status');
+        }
+      });
+    });
+  </script>
+</DashboardLayout>
+

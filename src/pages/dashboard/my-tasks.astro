@@ -1,0 +1,100 @@
+---
+import DashboardLayout from '../../layouts/DashboardLayout.astro';
+import { createAstroSupabaseClient } from '../../lib/supabase';
+import type { Workspace } from '../../types/database';
+
+const supabase = createAstroSupabaseClient(Astro.request, Astro.cookies);
+const { data: { user } } = await supabase.auth.getUser();
+
+const { data: profile } = await supabase
+  .from('profiles')
+  .select('*')
+  .eq('id', user?.id)
+  .single();
+
+const { data: memberWorkspaces } = await supabase
+  .from('workspace_members')
+  .select('workspace:workspaces (*)')
+  .eq('user_id', user?.id);
+
+const workspaces: Workspace[] = (memberWorkspaces || [])
+  .map((m: any) => m.workspace)
+  .filter(Boolean);
+
+const { data: assignedTasks } = await supabase
+  .from('task_assignments')
+  .select(`
+    assigned_at,
+    task:tasks (
+      *,
+      workspace:workspaces (*),
+      subtasks (*)
+    )
+  `)
+  .eq('user_id', user?.id)
+  .order('assigned_at', { ascending: false });
+
+const myTasks = (assignedTasks || []).map((item: any) => item.task).filter(Boolean);
+---
+
+<DashboardLayout 
+  title="Tugas Saya - TaskPilot" 
+  user={user} 
+  profile={profile} 
+  workspaces={workspaces}
+  currentWorkspace={workspaces[0] || null}
+>
+  <div class="max-w-4xl mx-auto space-y-6">
+    <div>
+      <h2 class="text-xl font-bold text-slate-800">Tugas Saya</h2>
+      <p class="text-xs text-slate-400 mt-1">Daftar semua tugas yang didelegasikan khusus kepada Anda.</p>
+    </div>
+
+    <div class="space-y-3">
+      {myTasks.map((task: any) => {
+        const totalSub = task.subtasks?.length || 0;
+        const completedSub = task.subtasks?.filter((s: any) => s.is_completed).length || 0;
+        return (
+          <div class="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs flex items-center justify-between gap-4">
+            <div class="space-y-1">
+              <span class="text-[10px] font-bold uppercase tracking-wider text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-md">
+                {task.workspace?.name}
+              </span>
+              <a href={`/dashboard/task/${task.id}`} class="block font-bold text-base text-slate-800 hover:text-indigo-600 transition">
+                {task.title}
+              </a>
+              {task.description && (
+                <p class="text-xs text-slate-500 line-clamp-1">{task.description}</p>
+              )}
+            </div>
+
+            <div class="flex items-center gap-3 shrink-0">
+              {totalSub > 0 && (
+                <span class="text-xs text-slate-400 font-medium">
+                  ☑ {completedSub}/{totalSub}
+                </span>
+              )}
+              <span class="text-xs capitalize font-semibold px-2.5 py-1 rounded-lg bg-slate-100 text-slate-600">
+                {task.status.replace('_', ' ')}
+              </span>
+              <span class={`text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded-lg ${
+                task.priority === 'urgent' ? 'bg-rose-50 text-rose-600' :
+                task.priority === 'high' ? 'bg-orange-50 text-orange-600' :
+                task.priority === 'medium' ? 'bg-blue-50 text-blue-600' :
+                'bg-slate-100 text-slate-600'
+              }`}>
+                {task.priority}
+              </span>
+            </div>
+          </div>
+        );
+      })}
+
+      {myTasks.length === 0 && (
+        <div class="text-center py-16 bg-white rounded-2xl border border-slate-200 p-8">
+          <p class="text-xs text-slate-400">Belum ada tugas yang ditugaskan kepada Anda saat ini.</p>
+        </div>
+      )}
+    </div>
+  </div>
+</DashboardLayout>

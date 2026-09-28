@@ -1,0 +1,51 @@
+import type { APIRoute } from 'astro';
+import { createAstroSupabaseClient } from '../../../lib/supabase';
+
+export const PATCH: APIRoute = async ({ params, request, cookies }) => {
+  const supabase = createAstroSupabaseClient(request, cookies);
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401 });
+
+  const taskId = params.id;
+  try {
+    const body = await request.json();
+    const allowedUpdates = ['status', 'priority', 'title', 'description', 'due_date', 'position'];
+    const updatePayload: Record<string, any> = {};
+
+    for (const key of allowedUpdates) {
+      if (body[key] !== undefined) {
+        updatePayload[key] = body[key];
+      }
+    }
+
+    const { data: updatedTask, error } = await supabase
+      .from('tasks')
+      .update(updatePayload)
+      .eq('id', taskId)
+      .select()
+      .single();
+
+    if (error) {
+      return new Response(JSON.stringify({ error: error.message }), { status: 400 });
+    }
+
+    return new Response(JSON.stringify(updatedTask), { status: 200 });
+  } catch (err: any) {
+    return new Response(JSON.stringify({ error: err.message || 'Gagal memperbarui tugas' }), { status: 500 });
+  }
+};
+
+export const DELETE: APIRoute = async ({ params, cookies, request }) => {
+  const supabase = createAstroSupabaseClient(request, cookies);
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401 });
+
+  const taskId = params.id;
+  const { error } = await supabase.from('tasks').delete().eq('id', taskId);
+
+  if (error) {
+    return new Response(JSON.stringify({ error: error.message }), { status: 400 });
+  }
+
+  return new Response(JSON.stringify({ success: true }), { status: 200 });
+};

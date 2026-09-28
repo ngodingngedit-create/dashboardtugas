@@ -1,0 +1,256 @@
+---
+import DashboardLayout from '../../../layouts/DashboardLayout.astro';
+import { createAstroSupabaseClient } from '../../../lib/supabase';
+import type { Workspace } from '../../../types/database';
+
+const supabase = createAstroSupabaseClient(Astro.request, Astro.cookies);
+const { data: { user } } = await supabase.auth.getUser();
+
+const taskId = Astro.params.id;
+
+// Ambil detail task lengkap
+const { data: task, error: taskError } = await supabase
+  .from('tasks')
+  .select(`
+    *,
+    workspace:workspaces (*),
+    creator:profiles!tasks_created_by_fkey (*),
+    subtasks (*),
+    task_comments (
+      *,
+      author:profiles (*)
+    ),
+    activity_logs (
+      *,
+      actor:profiles (*)
+    ),
+    task_attachments (
+      *,
+      uploader:profiles (*)
+    )
+  `)
+  .eq('id', taskId)
+  .order('position', { foreignTable: 'subtasks', ascending: true })
+  .order('created_at', { foreignTable: 'task_comments', ascending: true })
+  .order('created_at', { foreignTable: 'activity_logs', ascending: false })
+  .single();
+
+if (taskError || !task) {
+  return Astro.redirect('/dashboard');
+}
+
+const { data: profile } = await supabase
+  .from('profiles')
+  .select('*')
+  .eq('id', user?.id)
+  .single();
+
+const { data: memberWorkspaces } = await supabase
+  .from('workspace_members')
+  .select('workspace:workspaces (*)')
+  .eq('user_id', user?.id);
+
+const workspaces: Workspace[] = (memberWorkspaces || [])
+  .map((m: any) => m.workspace)
+  .filter(Boolean);
+
+const totalSub = task.subtasks?.length || 0;
+const completedSub = task.subtasks?.filter((s: any) => s.is_completed).length || 0;
+const progressPercent = totalSub > 0 ? Math.round((completedSub / totalSub) * 100) : 0;
+---
+<DashboardLayout 
+  title={`${task.title} - TaskPilot`} 
+  user={user} 
+  profile={profile} 
+  workspaces={workspaces}
+  currentWorkspace={task.workspace}
+>
+  <div class="max-w-5xl mx-auto space-y-6">
+    <div class="flex items-center justify-between">
+      <a href="/dashboard" class="text-xs font-semibold text-slate-500 hover:text-indigo-600 transition flex items-center gap-1">
+        &larr; Kembali ke Board
+      </a>
+      <button 
+        id="delete-task-btn" 
+        data-task-id={task.id}
+        class="text-xs font-semibold text-rose-500 hover:text-rose-700 transition cursor-pointer"
+      >
+        Hapus Tugas
+      </button>
+    </div>
+
+    <!-- Main Card -->
+    <div class="bg-white rounded-2xl border border-slate-200 p-8 shadow-xs space-y-6">
+      <div class="flex flex-wrap items-center gap-2">
+        <span class="text-xs font-bold uppercase tracking-wider px-2.5 py-1 rounded-lg bg-indigo-50 text-indigo-600">
+          {task.workspace?.name}
+        </span>
+        <span class="text-xs capitalize font-semibold px-2.5 py-1 rounded-lg bg-slate-100 text-slate-700">
+          Status: {task.status.replace('_', ' ')}
+        </span>
+        <span class="text-xs capitalize font-semibold px-2.5 py-1 rounded-lg bg-amber-50 text-amber-700">
+          Prioritas: {task.priority}
+        </span>
+      </div>
+
+      <h1 class="text-2xl font-extrabold text-slate-800">{task.title}</h1>
+      <p class="text-sm text-slate-600 whitespace-pre-line leading-relaxed">
+        {task.description || 'Tidak ada deskripsi rinci untuk tugas ini.'}
+      </p>
+
+      <!-- Checklist Section -->
+      <div class="pt-6 border-t border-slate-100">
+        <div class="flex items-center justify-between mb-2">
+          <h3 class="text-sm font-bold text-slate-800">Checklist / Subtasks</h3>
+          <span class="text-xs text-slate-400 font-semibold">{completedSub}/{totalSub} ({progressPercent}%)</span>
+        </div>
+
+        <div class="w-full bg-slate-100 h-2 rounded-full mb-4 overflow-hidden">
+          <div class="bg-emerald-500 h-full transition-all duration-300" style={`width: ${progressPercent}%`}></div>
+        </div>
+
+        <div class="space-y-2 mb-4" id="subtasks-container">
+          {task.subtasks?.map((sub: any) => (
+            <label class="flex items-center gap-3 p-2 hover:bg-slate-50 rounded-xl cursor-pointer">
+              <input 
+                type="checkbox" 
+                checked={sub.is_completed}
+                data-subtask-id={sub.id}
+                class="subtask-toggle w-4 h-4 text-indigo-600 rounded cursor-pointer"
+              />
+              <span class={`text-xs ${sub.is_completed ? 'line-through text-slate-400' : 'text-slate-700'}`}>
+                {sub.title}
+              </span>
+            </label>
+          ))}
+        </div>
+
+        <form id="add-subtask-form" class="flex gap-2">
+          <input 
+            type="text" 
+            name="title" 
+            placeholder="Tambah checklist baru..." 
+            required 
+            class="flex-1 px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:outline-none"
+          />
+          <button type="submit" class="px-4 py-2 bg-slate-800 hover:bg-slate-900 text-white text-xs font-semibold rounded-xl cursor-pointer">
+            Tambah
+          </button>
+        </form>
+      </div>
+    </div>
+
+    <!-- Comments & Activity Timeline -->
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+      <!-- Discussion -->
+      <div class="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs flex flex-col justify-between">
+        <div>
+          <h3 class="text-sm font-bold text-slate-800 mb-4">Komentar & Diskusi</h3>
+          <div class="space-y-3 mb-6 max-h-72 overflow-y-auto pr-1">
+            {task.task_comments?.map((c: any) => (
+              <div class="p-3 bg-slate-50 rounded-xl border border-slate-100">
+                <div class="flex items-center justify-between mb-1">
+                  <span class="font-bold text-xs text-slate-800">{c.author?.full_name || 'Anggota Tim'}</span>
+                  <span class="text-[10px] text-slate-400">{new Date(c.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                </div>
+                <p class="text-xs text-slate-600">{c.content}</p>
+              </div>
+            ))}
+            {task.task_comments?.length === 0 && (
+              <p class="text-xs text-slate-400 py-4 text-center">Belum ada komentar.</p>
+            )}
+          </div>
+        </div>
+
+        <form id="add-comment-form" class="space-y-2">
+          <textarea 
+            name="content" 
+            rows="2" 
+            placeholder="Tulis tanggapan atau komentar..." 
+            required 
+            class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:outline-none"
+          ></textarea>
+          <button type="submit" class="w-full py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs rounded-xl cursor-pointer">
+            Kirim Komentar
+          </button>
+        </form>
+      </div>
+
+      <!-- Activity Logs -->
+      <div class="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs">
+        <h3 class="text-sm font-bold text-slate-800 mb-4">Riwayat Aktivitas (Audit Trail)</h3>
+        <div class="space-y-3 max-h-96 overflow-y-auto pr-1">
+          {task.activity_logs?.map((log: any) => (
+            <div class="text-xs border-l-2 border-indigo-200 pl-3 py-1">
+              <span class="font-bold text-slate-700">{log.actor?.full_name || 'System'}</span>{' '}
+              {log.action === 'status_changed' && (
+                <span class="text-slate-500">mengubah status dari <b class="capitalize">{log.details?.from}</b> ke <b class="capitalize text-indigo-600">{log.details?.to}</b></span>
+              )}
+              {log.action === 'priority_changed' && (
+                <span class="text-slate-500">mengubah prioritas menjadi <b class="capitalize text-rose-600">{log.details?.to}</b></span>
+              )}
+              <span class="block text-[10px] text-slate-400 mt-0.5">{new Date(log.created_at).toLocaleString()}</span>
+            </div>
+          ))}
+          {task.activity_logs?.length === 0 && (
+            <p class="text-xs text-slate-400 py-4 text-center">Belum ada riwayat tercatat.</p>
+          )}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script define:vars={{ currentTaskId: task.id }}>
+    // Toggle Subtask
+    document.querySelectorAll('.subtask-toggle').forEach((cb) => {
+      cb.addEventListener('change', async (e) => {
+        const input = e.target;
+        const subtaskId = input.dataset.subtaskId;
+        const isCompleted = input.checked;
+
+        await fetch(`/api/subtasks/${subtaskId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ is_completed: isCompleted }),
+        });
+        window.location.reload();
+      });
+    });
+
+    // Add Subtask
+    const subtaskForm = document.getElementById('add-subtask-form');
+    subtaskForm?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const formData = new FormData(subtaskForm);
+      const res = await fetch(`/api/tasks/${currentTaskId}/subtasks`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: formData.get('title') }),
+      });
+      if (res.ok) window.location.reload();
+    });
+
+    // Add Comment
+    const commentForm = document.getElementById('add-comment-form');
+    commentForm?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const formData = new FormData(commentForm);
+      const res = await fetch(`/api/tasks/${currentTaskId}/comments`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: formData.get('content') }),
+      });
+      if (res.ok) window.location.reload();
+    });
+
+    // Delete Task
+    const deleteBtn = document.getElementById('delete-task-btn');
+    deleteBtn?.addEventListener('click', async () => {
+      if (confirm('Apakah Anda yakin ingin menghapus tugas ini?')) {
+        const res = await fetch(`/api/tasks/${currentTaskId}`, { method: 'DELETE' });
+        if (res.ok) window.location.href = '/dashboard';
+      }
+    });
+  </script>
+</DashboardLayout>
+
