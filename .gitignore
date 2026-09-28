@@ -168,3 +168,4 @@ vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .vite/
 >>>>>>> 96d209da36df7c8d9a911d7f0293f933175bd5ff
+.vercel
