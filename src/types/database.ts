@@ -119,6 +119,16 @@ export interface ActivityLog {
 export interface TaskAttachment {
   id: string
   task_id: string
+  file_name: string
+  file_path: string
+  file_size: number
+  file_type: string
+  uploaded_by: string | null
+  created_at: string
+  uploader?: Profile
+  download_url?: string
+}
+
 export interface WorkspaceInvite {
   id: string
   workspace_id: string
@@ -130,12 +140,3 @@ export interface WorkspaceInvite {
   created_at: string
 }
 
-  file_name: string
-  file_path: string
-  file_size: number
-  file_type: string
-  uploaded_by: string | null
-  created_at: string
-  uploader?: Profile
-  download_url?: string
-}
