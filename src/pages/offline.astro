@@ -1,0 +1,38 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+
+export const prerender = true;
+---
+
+<BaseLayout title="Offline - TaskPilot">
+  <div class="min-h-screen flex items-center justify-center p-4 bg-slate-50">
+    <div class="w-full max-w-md bg-white rounded-2xl shadow-xl border border-slate-100 p-8 text-center">
+      <div class="w-14 h-14 bg-indigo-100 rounded-2xl mx-auto flex items-center justify-center text-2xl mb-4">
+        📡
+      </div>
+      <h1 class="text-xl font-extrabold text-slate-800">Kamu sedang offline</h1>
+      <p class="text-sm text-slate-400 mt-2 leading-relaxed">
+        Sepertinya koneksi internet terputus. Halaman yang kamu buka butuh koneksi
+        untuk memuat data tugas terbaru dari server.
+      </p>
+      <div class="mt-6 flex flex-col gap-2">
+        <button
+          type="button"
+          onclick="window.location.reload()"
+          class="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm rounded-xl transition shadow-md shadow-indigo-200 cursor-pointer"
+        >
+          Coba Lagi
+        </button>
+        <a
+          href="/dashboard"
+          class="w-full py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-sm rounded-xl transition"
+        >
+          Kembali ke Dashboard
+        </a>
+      </div>
+      <p class="text-[11px] text-slate-400 mt-6">
+        Tips: install TaskPilot sebagai aplikasi agar bisa dibuka lebih cepat dari layar utama.
+      </p>
+    </div>
+  </div>
+</BaseLayout>

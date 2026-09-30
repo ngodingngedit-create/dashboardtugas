@@ -1,0 +1,106 @@
+---
+// InstallPrompt: tombol + banner "Install Aplikasi" untuk PWA TaskPilot.
+// - Chrome/Edge/Android: memakai event beforeinstallprompt.
+// - iPhone/iPad (Safari): tidak ada beforeinstallprompt → tampilkan panduan manual.
+// - Otomatis sembunyi jika aplikasi sudah berjalan dalam mode standalone.
+---
+
+<div id="pwa-install-wrapper" class="contents">
+  <!-- Floating install button (Chrome/Edge/Android) -->
+  <button
+    id="pwa-install-btn"
+    type="button"
+    class="hidden fixed bottom-5 right-5 z-50 items-center gap-2 px-4 py-3 bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white font-bold text-xs rounded-2xl shadow-xl shadow-indigo-300 transition"
+  >
+    <span class="text-base leading-none">⬇️</span>
+    Install Aplikasi
+  </button>
+
+  <!-- iOS manual guide banner -->
+  <div
+    id="pwa-ios-banner"
+    class="hidden fixed bottom-4 inset-x-4 z-50 sm:left-auto sm:right-5 sm:bottom-5 sm:max-w-sm bg-white border border-slate-200 rounded-2xl shadow-2xl p-4"
+  >
+    <div class="flex items-start gap-3">
+      <div class="w-10 h-10 rounded-xl bg-indigo-600 flex items-center justify-center text-white font-extrabold text-sm shrink-0">
+        DT
+      </div>
+      <div class="min-w-0 flex-1">
+        <p class="text-sm font-bold text-slate-800">Install TaskPilot</p>
+        <p class="text-xs text-slate-500 mt-1 leading-relaxed">
+          Ketuk <span class="font-semibold text-slate-700">Bagikan</span> di Safari,
+          lalu pilih <span class="font-semibold text-slate-700">Tambah ke Layar Utama</span> untuk memakai TaskPilot seperti aplikasi.
+        </p>
+      </div>
+      <button
+        id="pwa-ios-dismiss"
+        type="button"
+        aria-label="Tutup panduan install"
+        class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition"
+      >
+        ✕
+      </button>
+    </div>
+  </div>
+</div>
+
+<script>
+  const installBtn = document.getElementById('pwa-install-btn');
+  const iosBanner = document.getElementById('pwa-ios-banner');
+  const iosDismiss = document.getElementById('pwa-ios-dismiss');
+  let deferredPrompt = null;
+
+  const isStandalone =
+    window.matchMedia('(display-mode: standalone)').matches ||
+    window.matchMedia('(display-mode: fullscreen)').matches ||
+    // @ts-ignore — iOS Safari specific
+    window.navigator.standalone === true;
+
+  const isIos = /iphone|ipad|ipod/i.test(window.navigator.userAgent);
+
+  function hideAll() {
+    installBtn?.classList.add('hidden');
+    installBtn?.classList.remove('flex');
+    iosBanner?.classList.add('hidden');
+  }
+
+  if (isStandalone) {
+    // Sudah diinstall — tidak perlu tampilkan apa pun
+    hideAll();
+  } else if (isIos) {
+    const dismissed = window.localStorage.getItem('taskpilot-ios-install-dismissed');
+    if (!dismissed) {
+      // Tampilkan panduan setelah sedikit jeda agar tidak mengganggu first paint
+      window.setTimeout(() => iosBanner?.classList.remove('hidden'), 1500);
+    }
+    iosDismiss?.addEventListener('click', () => {
+      iosBanner?.classList.add('hidden');
+      window.localStorage.setItem('taskpilot-ios-install-dismissed', '1');
+    });
+  } else {
+    window.addEventListener('beforeinstallprompt', (e) => {
+      e.preventDefault();
+      deferredPrompt = e;
+      installBtn?.classList.remove('hidden');
+      installBtn?.classList.add('flex');
+    });
+
+    installBtn?.addEventListener('click', async () => {
+      if (!deferredPrompt) return;
+      deferredPrompt.prompt();
+      try {
+        await deferredPrompt.userChoice;
+      } catch (_) {
+        // abaikan — user menutup dialog
+      }
+      deferredPrompt = null;
+      installBtn?.classList.add('hidden');
+      installBtn?.classList.remove('flex');
+    });
+
+    window.addEventListener('appinstalled', () => {
+      deferredPrompt = null;
+      hideAll();
+    });
+  }
+</script>

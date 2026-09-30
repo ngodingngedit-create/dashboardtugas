@@ -1,5 +1,6 @@
 ---
 import BaseLayout from './BaseLayout.astro';
+import InstallPrompt from '../components/InstallPrompt.astro';
 import type { Profile, Workspace } from '../types/database';
 
 interface Props {
@@ -131,6 +132,8 @@ const pathname = Astro.url.pathname;
       </main>
     </div>
   </div>
+
+  <InstallPrompt />
 
   <script>
     const switcher = document.getElementById('workspace-switcher') as HTMLSelectElement;
