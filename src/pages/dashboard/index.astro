@@ -54,18 +54,18 @@ const statusColumns = [
   workspaces={workspaces}
   currentWorkspace={currentWorkspace}
 >
-  <div slot="header-actions" class="flex items-center gap-3">
+  <div slot="header-actions" class="flex items-center gap-2 sm:gap-3">
     {currentWorkspace ? (
       <button 
         id="open-task-modal-btn"
-        class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs rounded-xl shadow-sm transition cursor-pointer"
+        class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs rounded-xl shadow-sm transition cursor-pointer whitespace-nowrap"
       >
         + Tambah Tugas
       </button>
     ) : (
       <a 
         href="/dashboard/workspaces" 
-        class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs rounded-xl transition"
+        class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs rounded-xl transition whitespace-nowrap"
       >
         Buat Workspace Dulu
       </a>
@@ -73,9 +73,9 @@ const statusColumns = [
   </div>
 
   {!currentWorkspace ? (
-    <div class="max-w-md mx-auto text-center py-16 bg-white rounded-2xl border border-slate-200 p-8 mt-12">
+    <div class="max-w-md mx-auto text-center py-10 sm:py-16 px-5 sm:px-8 bg-white rounded-2xl border border-slate-200 mt-6 sm:mt-12">
       <div class="text-4xl mb-4">🚀</div>
-      <h3 class="text-lg font-bold text-slate-800">Mulai Buat Workspace</h3>
+      <h3 class="text-base sm:text-lg font-bold text-slate-800">Mulai Buat Workspace</h3>
       <p class="text-xs text-slate-400 mt-2 mb-6">
         Anda belum memiliki workspace. Buat workspace pertama Anda untuk mulai mengatur tugas tim.
       </p>
@@ -87,11 +87,11 @@ const statusColumns = [
       </a>
     </div>
   ) : (
-    <div class="grid grid-cols-1 md:grid-cols-4 gap-6 items-start">
+    <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-6 items-start">
       {statusColumns.map((col) => {
         const colTasks = tasks.filter((t) => t.status === col.key);
         return (
-          <div class="bg-slate-100 rounded-2xl p-4 flex flex-col min-h-[500px]">
+          <div class="bg-slate-100 rounded-2xl p-4 flex flex-col min-h-0 md:min-h-[500px]">
             <div class="flex items-center justify-between mb-4 px-1">
               <div class="flex items-center gap-2">
                 <span class={`w-2.5 h-2.5 rounded-full ${col.color}`}></span>
@@ -107,9 +107,9 @@ const statusColumns = [
                 const totalSub = task.subtasks?.length || 0;
                 const completedSub = task.subtasks?.filter((s: any) => s.is_completed).length || 0;
                 return (
-                  <div class="bg-white p-4 rounded-xl shadow-xs border border-slate-200 hover:shadow-md transition">
+                  <div class="bg-white p-4 rounded-xl shadow-xs border border-slate-200 hover:shadow-md transition min-w-0">
                     <div class="flex items-center justify-between gap-2 mb-2">
-                      <span class={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-md ${
+                      <span class={`shrink-0 text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-md ${
                         task.priority === 'urgent' ? 'bg-rose-50 text-rose-600' :
                         task.priority === 'high' ? 'bg-orange-50 text-orange-600' :
                         task.priority === 'medium' ? 'bg-blue-50 text-blue-600' :
@@ -119,7 +119,7 @@ const statusColumns = [
                       </span>
 
                       <select 
-                        class="task-status-select text-[11px] bg-transparent text-slate-400 hover:text-slate-600 font-medium cursor-pointer"
+                        class="task-status-select min-w-0 max-w-[130px] truncate text-[11px] bg-transparent text-slate-400 hover:text-slate-600 font-medium cursor-pointer focus:outline-none"
                         data-task-id={task.id}
                       >
                         {statusColumns.map((c) => (
@@ -130,7 +130,7 @@ const statusColumns = [
                       </select>
                     </div>
 
-                    <a href={`/dashboard/task/${task.id}`} class="block font-bold text-sm text-slate-800 hover:text-indigo-600 transition mb-1">
+                    <a href={`/dashboard/task/${task.id}`} class="block font-bold text-sm text-slate-800 hover:text-indigo-600 transition mb-1 break-words leading-snug">
                       {task.title}
                     </a>
                     
@@ -167,7 +167,7 @@ const statusColumns = [
   <!-- Modal Tambah Task -->
   {currentWorkspace && (
     <div id="task-modal" class="hidden fixed inset-0 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4 z-50">
-      <div class="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-100">
+      <div class="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-100 max-h-[92dvh] overflow-y-auto">
         <h2 class="text-base font-bold text-slate-800 mb-4">Buat Tugas Baru</h2>
         <form id="create-task-form" class="space-y-4">
           <input type="hidden" name="workspace_id" value={currentWorkspace.id} />
@@ -193,8 +193,8 @@ const statusColumns = [
             ></textarea>
           </div>
 
-          <div class="grid grid-cols-2 gap-3">
-            <div>
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div class="min-w-0">
               <label class="block text-xs font-semibold text-slate-600 uppercase mb-1">Prioritas</label>
               <select name="priority" class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none">
                 <option value="low">Low</option>
@@ -203,13 +203,13 @@ const statusColumns = [
                 <option value="urgent">Urgent</option>
               </select>
             </div>
-            <div>
+            <div class="min-w-0">
               <label class="block text-xs font-semibold text-slate-600 uppercase mb-1">Tenggat Waktu</label>
               <input type="date" name="due_date" class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none" />
             </div>
           </div>
 
-          <div class="flex justify-end gap-2 pt-2">
+          <div class="flex flex-col-reverse sm:flex-row sm:justify-end gap-2 pt-2">
             <button 
               type="button" 
               id="close-task-modal-btn"

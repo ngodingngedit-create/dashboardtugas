@@ -44,9 +44,9 @@ const myTasks = (assignedTasks || []).map((item: any) => item.task).filter(Boole
   workspaces={workspaces}
   currentWorkspace={workspaces[0] || null}
 >
-  <div class="max-w-4xl mx-auto space-y-6">
+  <div class="max-w-4xl mx-auto space-y-5 sm:space-y-6">
     <div>
-      <h2 class="text-xl font-bold text-slate-800">Tugas Saya</h2>
+      <h2 class="text-lg sm:text-xl font-bold text-slate-800">Tugas Saya</h2>
       <p class="text-xs text-slate-400 mt-1">Daftar semua tugas yang didelegasikan khusus kepada Anda.</p>
     </div>
 
@@ -55,20 +55,20 @@ const myTasks = (assignedTasks || []).map((item: any) => item.task).filter(Boole
         const totalSub = task.subtasks?.length || 0;
         const completedSub = task.subtasks?.filter((s: any) => s.is_completed).length || 0;
         return (
-          <div class="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs flex items-center justify-between gap-4">
-            <div class="space-y-1">
-              <span class="text-[10px] font-bold uppercase tracking-wider text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-md">
+          <div class="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+            <div class="space-y-1 min-w-0 flex-1">
+              <span class="inline-block text-[10px] font-bold uppercase tracking-wider text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-md truncate max-w-full">
                 {task.workspace?.name}
               </span>
-              <a href={`/dashboard/task/${task.id}`} class="block font-bold text-base text-slate-800 hover:text-indigo-600 transition">
+              <a href={`/dashboard/task/${task.id}`} class="block font-bold text-sm sm:text-base text-slate-800 hover:text-indigo-600 transition break-words leading-snug">
                 {task.title}
               </a>
               {task.description && (
-                <p class="text-xs text-slate-500 line-clamp-1">{task.description}</p>
+                <p class="text-xs text-slate-500 line-clamp-2 sm:line-clamp-1 break-words">{task.description}</p>
               )}
             </div>
 
-            <div class="flex items-center gap-3 shrink-0">
+            <div class="flex flex-wrap items-center gap-2 shrink-0">
               {totalSub > 0 && (
                 <span class="text-xs text-slate-400 font-medium">
                   ☑ {completedSub}/{totalSub}
@@ -91,7 +91,7 @@ const myTasks = (assignedTasks || []).map((item: any) => item.task).filter(Boole
       })}
 
       {myTasks.length === 0 && (
-        <div class="text-center py-16 bg-white rounded-2xl border border-slate-200 p-8">
+        <div class="text-center py-16 bg-white rounded-2xl border border-slate-200 px-5 sm:px-8">
           <p class="text-xs text-slate-400">Belum ada tugas yang ditugaskan kepada Anda saat ini.</p>
         </div>
       )}

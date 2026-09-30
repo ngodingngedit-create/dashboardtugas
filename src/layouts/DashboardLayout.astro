@@ -15,16 +15,27 @@ const pathname = Astro.url.pathname;
 ---
 
 <BaseLayout title={title}>
-  <div class="flex h-screen overflow-hidden bg-slate-50">
-    <!-- Sidebar -->
-    <aside class="w-64 bg-white border-r border-slate-200 flex flex-col justify-between shrink-0">
+  <div class="flex h-screen h-dvh overflow-hidden bg-slate-50">
+    <!-- Mobile sidebar overlay -->
+    <div id="sidebar-overlay" class="hidden fixed inset-0 z-30 bg-slate-900/50 backdrop-blur-[1px] lg:hidden"></div>
+
+    <!-- Sidebar / Drawer -->
+    <aside id="mobile-sidebar" class="fixed inset-y-0 left-0 z-40 flex w-72 max-w-[85vw] -translate-x-full flex-col justify-between bg-white border-r border-slate-200 shadow-2xl transition-transform duration-300 ease-in-out lg:static lg:z-auto lg:w-64 lg:max-w-none lg:shrink-0 lg:translate-x-0 lg:shadow-none">
       <div>
         <!-- App Header / Logo -->
-        <div class="h-16 flex items-center gap-3 px-6 border-b border-slate-200">
-          <div class="w-9 h-9 rounded-xl bg-indigo-600 flex items-center justify-center text-white font-bold text-lg shadow-sm">
+        <div class="h-16 flex items-center gap-3 px-5 sm:px-6 border-b border-slate-200">
+          <div class="w-9 h-9 rounded-xl bg-indigo-600 flex items-center justify-center text-white font-bold text-lg shadow-sm shrink-0">
             DT
           </div>
-          <span class="font-bold text-slate-800 text-lg tracking-tight">TaskPilot</span>
+          <span class="font-bold text-slate-800 text-lg tracking-tight truncate">TaskPilot</span>
+          <button
+            id="sidebar-close-btn"
+            type="button"
+            aria-label="Tutup menu"
+            class="ml-auto flex h-9 w-9 items-center justify-center rounded-xl text-slate-500 hover:bg-slate-100 hover:text-slate-700 transition lg:hidden"
+          >
+            ✕
+          </button>
         </div>
 
         <!-- Workspace Selector -->
@@ -92,20 +103,30 @@ const pathname = Astro.url.pathname;
     </aside>
 
     <!-- Main Content -->
-    <div class="flex-1 flex flex-col h-screen overflow-hidden">
-      <header class="h-16 bg-white border-b border-slate-200 px-8 flex items-center justify-between shrink-0">
-        <div>
-          <h1 class="text-lg font-bold text-slate-800">{currentWorkspace?.name || 'Dashboard'}</h1>
-          {currentWorkspace?.description && (
-            <p class="text-xs text-slate-400 truncate max-w-md">{currentWorkspace.description}</p>
-          )}
+    <div class="flex-1 flex flex-col h-screen h-dvh min-w-0 overflow-hidden">
+      <header class="min-h-16 bg-white border-b border-slate-200 px-4 sm:px-6 lg:px-8 py-2.5 flex items-center justify-between gap-3 shrink-0">
+        <div class="flex items-center gap-2.5 sm:gap-3 min-w-0 flex-1">
+          <button
+            id="sidebar-open-btn"
+            type="button"
+            aria-label="Buka menu navigasi"
+            class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-lg text-slate-600 shadow-xs transition hover:bg-slate-50 active:scale-95 lg:hidden"
+          >
+            ☰
+          </button>
+          <div class="min-w-0 flex-1">
+            <h1 class="text-base sm:text-lg font-bold text-slate-800 truncate">{currentWorkspace?.name || 'Dashboard'}</h1>
+            {currentWorkspace?.description && (
+              <p class="hidden text-xs text-slate-400 truncate max-w-md sm:block">{currentWorkspace.description}</p>
+            )}
+          </div>
         </div>
-        <div class="flex items-center gap-3">
+        <div class="flex items-center gap-2 sm:gap-3 shrink-0">
           <slot name="header-actions" />
         </div>
       </header>
 
-      <main class="flex-1 overflow-y-auto p-8 bg-slate-50">
+      <main class="flex-1 overflow-y-auto overflow-x-hidden p-4 sm:p-6 lg:p-8 bg-slate-50">
         <slot />
       </main>
     </div>
@@ -121,5 +142,36 @@ const pathname = Astro.url.pathname;
         }
       });
     }
+
+    const sidebar = document.getElementById('mobile-sidebar');
+    const overlay = document.getElementById('sidebar-overlay');
+    const openBtn = document.getElementById('sidebar-open-btn');
+    const closeBtn = document.getElementById('sidebar-close-btn');
+
+    const openSidebar = () => {
+      sidebar?.classList.remove('-translate-x-full');
+      overlay?.classList.remove('hidden');
+      document.body.classList.add('overflow-hidden', 'lg:overflow-auto');
+    };
+
+    const closeSidebar = () => {
+      if (window.innerWidth >= 1024) return;
+      sidebar?.classList.add('-translate-x-full');
+      overlay?.classList.add('hidden');
+      document.body.classList.remove('overflow-hidden', 'lg:overflow-auto');
+    };
+
+    openBtn?.addEventListener('click', openSidebar);
+    closeBtn?.addEventListener('click', closeSidebar);
+    overlay?.addEventListener('click', closeSidebar);
+    sidebar?.querySelectorAll('a').forEach((link) => {
+      link.addEventListener('click', closeSidebar);
+    });
+    window.addEventListener('resize', () => {
+      if (window.innerWidth >= 1024) {
+        overlay?.classList.add('hidden');
+        document.body.classList.remove('overflow-hidden', 'lg:overflow-auto');
+      }
+    });
   </script>
 </BaseLayout>
