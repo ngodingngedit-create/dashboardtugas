@@ -1,0 +1,87 @@
+---
+import DashboardLayout from '../../layouts/DashboardLayout.astro';
+import { createAstroSupabaseClient } from '../../lib/supabase';
+import type { Workspace } from '../../types/database';
+const supabase = createAstroSupabaseClient(Astro.request, Astro.cookies);
+const { data: { user } } = await supabase.auth.getUser();
+const { data: profile } = await supabase.from('profiles').select('*').eq('id', user?.id).single();
+const { data: memberWorkspaces } = await supabase.from('workspace_members').select('workspace:workspaces (*)').eq('user_id', user?.id);
+const workspaces: Workspace[] = (memberWorkspaces || []).map((m: any) => m.workspace).filter(Boolean);
+const workspaceIds = workspaces.map((w) => w.id);
+let tasks: any[] = [];
+if (workspaceIds.length > 0 && user?.id) {
+  const { data: tasksData } = await supabase.from('tasks').select(`*, workspace:workspaces (*), creator:profiles!tasks_created_by_fkey (id, full_name, avatar_url), subtasks (*)`).in('workspace_id', workspaceIds).eq('created_by', user.id).in('status', ['todo', 'in_progress', 'review']).order('due_date', { ascending: true, nullsFirst: false }).order('created_at', { ascending: false });
+  tasks = (tasksData || []).sort((a: any, b: any) => {
+    if (!a.due_date && !b.due_date) return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+    if (!a.due_date) return 1;
+    if (!b.due_date) return -1;
+    const d = new Date(a.due_date).getTime() - new Date(b.due_date).getTime();
+    return d !== 0 ? d : new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+  });
+}
+const today = new Date(); today.setHours(0,0,0,0);
+function dueInfo(dueDate: string | null, status: string) {
+  if (!dueDate) return { label: 'Tanpa tenggat', tone: 'bg-slate-100 text-slate-500' };
+  const due = new Date(dueDate); due.setHours(0,0,0,0);
+  const diff = Math.round((due.getTime() - today.getTime()) / 86400000);
+  const fmt = due.toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' });
+  if (status === 'done') return { label: fmt, tone: 'bg-emerald-50 text-emerald-600' };
+  if (diff < 0) return { label: `Terlambat • ${fmt}`, tone: 'bg-rose-50 text-rose-600' };
+  if (diff === 0) return { label: `Hari ini • ${fmt}`, tone: 'bg-amber-50 text-amber-700' };
+  if (diff === 1) return { label: `Besok • ${fmt}`, tone: 'bg-blue-50 text-blue-600' };
+  return { label: fmt, tone: 'bg-slate-100 text-slate-600' };
+}
+---
+<DashboardLayout title="Home - Semua Tugas - TaskPilot" headerTitle="Home - Semua Tugas" user={user} profile={profile} workspaces={workspaces} currentWorkspace={null}>
+  <div class="max-w-4xl mx-auto space-y-5 sm:space-y-6">
+    <div class="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+      <div>
+        <h2 class="text-lg sm:text-xl font-bold text-slate-800">Semua Tugas</h2>
+        <p class="text-xs text-slate-400 mt-1">Daftar tugas yang Anda buat dari semua workspace — hanya To Do, In Progress, dan Review, diurutkan dari tenggat waktu terdekat.</p>
+      </div>
+      {tasks.length > 0 && (<p class="text-xs font-semibold text-slate-500 shrink-0">{tasks.length} tugas</p>)}
+    </div>
+    {workspaces.length === 0 ? (
+      <div class="text-center py-16 bg-white rounded-2xl border border-slate-200 px-5 sm:px-8">
+        <div class="text-4xl mb-4">🚀</div>
+        <h3 class="text-base sm:text-lg font-bold text-slate-800">Mulai Buat Workspace</h3>
+        <p class="text-xs text-slate-400 mt-2 mb-6">Anda belum memiliki workspace. Buat workspace pertama Anda untuk mulai mengatur tugas tim.</p>
+        <a href="/dashboard/workspaces" class="inline-block px-5 py-2.5 bg-indigo-600 text-white font-bold text-xs rounded-xl hover:bg-indigo-700 transition">Buat Workspace Sekarang</a>
+      </div>
+    ) : (
+      <div class="space-y-3">
+        {tasks.map((task: any) => {
+          const totalSub = task.subtasks?.length || 0;
+          const doneSub = task.subtasks?.filter((s: any) => s.is_completed).length || 0;
+          const due = dueInfo(task.due_date, task.status);
+          return (
+            <div class="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+              <div class="space-y-1.5 min-w-0 flex-1">
+                <div class="flex flex-wrap items-center gap-1.5">
+                  <span class="inline-block text-[10px] font-bold uppercase tracking-wider text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-md truncate max-w-full">{task.workspace?.name || 'Workspace'}</span>
+                  <span class={`inline-block text-[10px] font-bold px-2 py-0.5 rounded-md ${due.tone}`}>📅 {due.label}</span>
+                </div>
+                <a href={`/dashboard/task/${task.id}`} class="block font-bold text-sm sm:text-base text-slate-800 hover:text-indigo-600 transition break-words leading-snug">{task.title}</a>
+                {task.description && (<p class="text-xs text-slate-500 line-clamp-2 sm:line-clamp-1 break-words">{task.description}</p>)}
+                <p class="text-[11px] text-slate-400">Dibuat oleh {task.creator?.full_name?.split(' ')[0] || 'User'}</p>
+              </div>
+              <div class="flex flex-wrap items-center gap-2 shrink-0">
+                {totalSub > 0 && (<span class="text-xs text-slate-400 font-medium">☑ {doneSub}/{totalSub}</span>)}
+                <span class="text-xs capitalize font-semibold px-2.5 py-1 rounded-lg bg-slate-100 text-slate-600">{String(task.status).replace('_', ' ')}</span>
+                <span class={`text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded-lg ${task.priority === 'urgent' ? 'bg-rose-50 text-rose-600' : task.priority === 'high' ? 'bg-orange-50 text-orange-600' : task.priority === 'medium' ? 'bg-blue-50 text-blue-600' : 'bg-slate-100 text-slate-600'}`}>{task.priority}</span>
+              </div>
+            </div>
+          );
+        })}
+        {tasks.length === 0 && (
+          <div class="text-center py-16 bg-white rounded-2xl border border-slate-200 px-5 sm:px-8">
+            <div class="text-4xl mb-4">📭</div>
+            <h3 class="text-sm font-bold text-slate-700">Belum ada tugas aktif</h3>
+            <p class="text-xs text-slate-400 mt-1">Anda belum membuat tugas dengan status To Do, In Progress, atau Review. Tambahkan tugas dari halaman Board Tugas.</p>
+            <a href="/dashboard" class="inline-block mt-5 px-5 py-2.5 bg-indigo-600 text-white font-bold text-xs rounded-xl hover:bg-indigo-700 transition">Ke Board Tugas</a>
+          </div>
+        )}
+      </div>
+    )}
+  </div>
+</DashboardLayout>

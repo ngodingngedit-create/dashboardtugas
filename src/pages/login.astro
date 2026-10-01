@@ -79,7 +79,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
         }
 
         const urlParams = new URLSearchParams(window.location.search);
-        const redirectTo = urlParams.get('redirect') || '/dashboard';
+        const redirectTo = urlParams.get('redirect') || '/dashboard/home';
         window.location.href = redirectTo;
       } catch (err: any) {
         errorBox.textContent = err.message;

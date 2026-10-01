@@ -5,13 +5,14 @@ import type { Profile, Workspace } from '../types/database';
 
 interface Props {
   title?: string;
+  headerTitle?: string;
   user: any;
   profile: Profile | null;
   workspaces: Workspace[];
   currentWorkspace?: Workspace | null;
 }
 
-const { title = 'Dashboard', user, profile, workspaces, currentWorkspace } = Astro.props;
+const { title = 'Dashboard', headerTitle, user, profile, workspaces, currentWorkspace } = Astro.props;
 const pathname = Astro.url.pathname;
 ---
 
@@ -60,18 +61,26 @@ const pathname = Astro.url.pathname;
         <!-- Navigation Menu -->
         <nav class="p-4 space-y-1">
           <a 
+            href="/dashboard/home" 
+            class={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition ${pathname === '/dashboard/home' ? 'bg-indigo-50 text-indigo-600 font-semibold' : 'text-slate-600 hover:bg-slate-50'}`}
+          >
+            <span class="text-base">🏠</span> Home
+          </a>
+
+          <a 
             href="/dashboard" 
             class={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition ${pathname === '/dashboard' ? 'bg-indigo-50 text-indigo-600 font-semibold' : 'text-slate-600 hover:bg-slate-50'}`}
           >
             <span class="text-base">📋</span> Board Tugas
           </a>
 
-          <a 
+          {/* Tugas Saya di-hide dari sidebar, halaman /dashboard/my-tasks tetap bisa diakses via URL langsung */}
+          {/* <a 
             href="/dashboard/my-tasks" 
             class={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition ${pathname === '/dashboard/my-tasks' ? 'bg-indigo-50 text-indigo-600 font-semibold' : 'text-slate-600 hover:bg-slate-50'}`}
           >
             <span class="text-base">✅</span> Tugas Saya
-          </a>
+          </a> */}
 
           <a 
             href="/dashboard/workspaces" 
@@ -116,7 +125,7 @@ const pathname = Astro.url.pathname;
             ☰
           </button>
           <div class="min-w-0 flex-1">
-            <h1 class="text-base sm:text-lg font-bold text-slate-800 truncate">{currentWorkspace?.name || 'Dashboard'}</h1>
+            <h1 class="text-base sm:text-lg font-bold text-slate-800 truncate">{headerTitle || currentWorkspace?.name || 'Dashboard'}</h1>
             {currentWorkspace?.description && (
               <p class="hidden text-xs text-slate-400 truncate max-w-md sm:block">{currentWorkspace.description}</p>
             )}

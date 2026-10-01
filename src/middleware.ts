@@ -35,7 +35,7 @@ export const onRequest = defineMiddleware(async (context, next) => {
 
   // Jika user sudah login dan mengakses halaman /login atau /register
   if (user && (pathname === '/login' || pathname === '/register')) {
-    const redirectTo = url.searchParams.get('redirect') || '/dashboard';
+    const redirectTo = url.searchParams.get('redirect') || '/dashboard/home';
     return redirect(redirectTo);
   }
 
