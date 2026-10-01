@@ -91,17 +91,31 @@ const workspaces: Workspace[] = (memberWorkspaces || [])
             </div>
 
             <div class="mt-4 pt-4 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2">
-              {canInvite ? (
-                <button
-                  class="invite-team-btn text-xs font-semibold text-slate-600 hover:text-indigo-600 transition flex items-center gap-1.5 cursor-pointer"
-                  data-workspace-id={item.workspace.id}
-                  data-workspace-name={item.workspace.name}
+              <div class="flex flex-wrap items-center gap-3">
+                {canInvite ? (
+                  <button
+                    class="invite-team-btn text-xs font-semibold text-slate-600 hover:text-indigo-600 transition flex items-center gap-1.5 cursor-pointer"
+                    data-workspace-id={item.workspace.id}
+                    data-workspace-name={item.workspace.name}
+                  >
+                    <span>🔗</span> Salin Link Undangan
+                  </button>
+                ) : (
+                  <button
+                    class="leave-ws-btn text-xs font-semibold text-slate-500 hover:text-rose-600 transition flex items-center gap-1.5 cursor-pointer"
+                    data-workspace-id={item.workspace.id}
+                    data-workspace-name={item.workspace.name}
+                  >
+                    <span>🚪</span> Keluar
+                  </button>
+                )}
+                <a
+                  href={`/dashboard/workspaces/${item.workspace.id}`}
+                  class="text-xs font-semibold text-slate-600 hover:text-indigo-600 transition"
                 >
-                  <span>🔗</span> Salin Link Undangan
-                </button>
-              ) : (
-                <span></span>
-              )}
+                  📚 Materi
+                </a>
+              </div>
               <a 
                 href={`/dashboard?workspace_id=${item.workspace.id}`}
                 class="text-xs font-semibold text-indigo-600 hover:text-indigo-700"
@@ -270,6 +284,27 @@ const workspaces: Workspace[] = (memberWorkspaces || [])
           copyInviteBtn.textContent = 'Salin';
         }, 2000);
       }
+    });
+
+    // Keluar dari workspace sharing (non-owner)
+    document.querySelectorAll('.leave-ws-btn').forEach((btn) => {
+      btn.addEventListener('click', async (e) => {
+        const target = e.currentTarget as HTMLButtonElement;
+        const wsId = target.dataset.workspaceId;
+        const wsName = target.dataset.workspaceName || 'workspace ini';
+        if (!confirm(`Keluar dari "${wsName}"? Anda tidak akan bisa melihat tugas dan materinya lagi.`)) return;
+        const prev = target.innerHTML;
+        target.innerHTML = '⏳ Keluar...';
+        try {
+          const res = await fetch(`/api/workspaces/${wsId}/leave`, { method: 'DELETE' });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(data.error || 'Gagal keluar dari workspace');
+          window.location.reload();
+        } catch (err: any) {
+          alert(err.message);
+          target.innerHTML = prev;
+        }
+      });
     });
 
   </script>

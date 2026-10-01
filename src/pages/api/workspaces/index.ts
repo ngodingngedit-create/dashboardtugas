@@ -38,6 +38,23 @@ export const POST: APIRoute = async ({ request, cookies }) => {
       return new Response(JSON.stringify({ error: error.message }), { status: 400 });
     }
 
+    // Daftarkan pembuat sebagai owner agar workspace muncul di daftar miliknya
+    // (daftar workspace diambil dari tabel workspace_members per user).
+    const { error: memberError } = await supabase.from('workspace_members').insert({
+      workspace_id: workspace.id,
+      user_id: user.id,
+      role: 'owner',
+    });
+
+    if (memberError) {
+      // Rollback: hapus workspace yang baru dibuat agar tidak jadi yatim / terlihat siapa saja
+      await supabase.from('workspaces').delete().eq('id', workspace.id);
+      return new Response(
+        JSON.stringify({ error: `Gagal mendaftarkan owner workspace: ${memberError.message}` }),
+        { status: 500 }
+      );
+    }
+
     return new Response(JSON.stringify(workspace), { status: 201 });
   } catch (err: any) {
     return new Response(JSON.stringify({ error: err.message || 'Gagal membuat workspace' }), { status: 500 });

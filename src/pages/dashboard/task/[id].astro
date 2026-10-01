@@ -39,6 +39,21 @@ if (taskError || !task) {
   return Astro.redirect('/dashboard');
 }
 
+// Keamanan: user hanya boleh membuka task dari workspace yang ia ikuti.
+// Tanpa ini, user bisa mengintip task workspace lain hanya dengan menebak URL /dashboard/task/<id>.
+if (!user) {
+  return Astro.redirect('/login');
+}
+const { data: myMembership } = await supabase
+  .from('workspace_members')
+  .select('id')
+  .eq('workspace_id', task.workspace_id)
+  .eq('user_id', user.id)
+  .single();
+if (!myMembership) {
+  return Astro.redirect('/dashboard');
+}
+
 const { data: profile } = await supabase
   .from('profiles')
   .select('*')

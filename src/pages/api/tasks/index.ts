@@ -1,6 +1,7 @@
 import type { APIRoute } from 'astro';
 import { createAstroSupabaseClient } from '../../../lib/supabase';
 import { ensureUserProfile } from '../../../lib/auth-helpers';
+import { forbiddenWorkspace, isWorkspaceMember } from '../../../lib/workspace-auth';
 
 export const POST: APIRoute = async ({ request, cookies }) => {
   const supabase = createAstroSupabaseClient(request, cookies);
@@ -13,6 +14,12 @@ export const POST: APIRoute = async ({ request, cookies }) => {
 
     if (!workspace_id || !title) {
       return new Response(JSON.stringify({ error: 'Workspace dan Judul tugas wajib diisi' }), { status: 400 });
+    }
+
+    // Hanya anggota workspace ini yang boleh membuat tugas di dalamnya.
+    const isMember = await isWorkspaceMember(supabase, user.id, workspace_id);
+    if (!isMember) {
+      return forbiddenWorkspace();
     }
 
     // Pastikan profile user ada di tabel public.profiles

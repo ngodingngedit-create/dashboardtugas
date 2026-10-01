@@ -1,6 +1,7 @@
 import type { APIRoute } from 'astro';
 import { createAstroSupabaseClient } from '../../../../lib/supabase';
 import { ensureUserProfile } from '../../../../lib/auth-helpers';
+import { forbiddenWorkspace, hasWorkspaceRole } from '../../../../lib/workspace-auth';
 import crypto from 'node:crypto';
 
 export const POST: APIRoute = async ({ params, request, cookies, url }) => {
@@ -14,6 +15,12 @@ export const POST: APIRoute = async ({ params, request, cookies, url }) => {
   const workspaceId = params.id;
   if (!workspaceId) {
     return new Response(JSON.stringify({ error: 'Workspace ID required' }), { status: 400 });
+  }
+
+  // Hanya owner / admin workspace ini yang boleh membuat link undangan.
+  const canInvite = await hasWorkspaceRole(supabase, user.id, workspaceId, ['owner', 'admin']);
+  if (!canInvite) {
+    return forbiddenWorkspace('Hanya owner atau admin workspace ini yang boleh mengundang anggota');
   }
 
   await ensureUserProfile(supabase, user);

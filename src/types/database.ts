@@ -129,6 +129,19 @@ export interface TaskAttachment {
   download_url?: string
 }
 
+
+export interface WorkspaceMaterial {
+  id: string
+  workspace_id: string
+  title: string
+  content: string | null
+  link_url: string | null
+  created_by: string | null
+  created_at: string
+  updated_at: string
+  author?: Profile
+}
+
 export interface WorkspaceInvite {
   id: string
   workspace_id: string
