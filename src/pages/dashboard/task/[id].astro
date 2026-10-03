@@ -1,17 +1,24 @@
 ---
 import DashboardLayout from '../../../layouts/DashboardLayout.astro';
 import { createAstroSupabaseClient } from '../../../lib/supabase';
+import { logPerf, timed, toServerTimingValue, type TimingEntry } from '../../../lib/perf';
 import type { Workspace } from '../../../types/database';
 
+// Fase 0: instrumentasi halaman terberat (task detail). Lihat header Server-Timing + log server.
+const perfTimings: TimingEntry[] = [];
+
 const supabase = createAstroSupabaseClient(Astro.request, Astro.cookies);
-const { data: { user } } = await supabase.auth.getUser();
+const { data: { user } } = await timed('page-getUser', () => supabase.auth.getUser(), perfTimings);
 
 const taskId = Astro.params.id;
 
 // Ambil detail task lengkap
-const { data: task, error: taskError } = await supabase
-  .from('tasks')
-  .select(`
+const { data: task, error: taskError } = await timed(
+  'page-task',
+  () =>
+    supabase
+      .from('tasks')
+      .select(`
     *,
     workspace:workspaces (*),
     creator:profiles!tasks_created_by_fkey (*),
@@ -29,11 +36,13 @@ const { data: task, error: taskError } = await supabase
       uploader:profiles (*)
     )
   `)
-  .eq('id', taskId)
-  .order('position', { foreignTable: 'subtasks', ascending: true })
-  .order('created_at', { foreignTable: 'task_comments', ascending: true })
-  .order('created_at', { foreignTable: 'activity_logs', ascending: false })
-  .single();
+      .eq('id', taskId)
+      .order('position', { foreignTable: 'subtasks', ascending: true })
+      .order('created_at', { foreignTable: 'task_comments', ascending: true })
+      .order('created_at', { foreignTable: 'activity_logs', ascending: false })
+      .single(),
+  perfTimings
+);
 
 if (taskError || !task) {
   return Astro.redirect('/dashboard');
@@ -44,26 +53,41 @@ if (taskError || !task) {
 if (!user) {
   return Astro.redirect('/login');
 }
-const { data: myMembership } = await supabase
-  .from('workspace_members')
-  .select('id')
-  .eq('workspace_id', task.workspace_id)
-  .eq('user_id', user.id)
-  .single();
+const { data: myMembership } = await timed(
+  'page-membership',
+  () =>
+    supabase
+      .from('workspace_members')
+      .select('id')
+      .eq('workspace_id', task.workspace_id)
+      .eq('user_id', user.id)
+      .single(),
+  perfTimings
+);
 if (!myMembership) {
   return Astro.redirect('/dashboard');
 }
 
-const { data: profile } = await supabase
-  .from('profiles')
-  .select('*')
-  .eq('id', user?.id)
-  .single();
+const { data: profile } = await timed(
+  'page-profile',
+  () =>
+    supabase
+      .from('profiles')
+      .select('*')
+      .eq('id', user?.id)
+      .single(),
+  perfTimings
+);
 
-const { data: memberWorkspaces } = await supabase
-  .from('workspace_members')
-  .select('workspace:workspaces (*)')
-  .eq('user_id', user?.id);
+const { data: memberWorkspaces } = await timed(
+  'page-members',
+  () =>
+    supabase
+      .from('workspace_members')
+      .select('workspace:workspaces (*)')
+      .eq('user_id', user?.id),
+  perfTimings
+);
 
 const workspaces: Workspace[] = (memberWorkspaces || [])
   .map((m: any) => m.workspace)
@@ -72,6 +96,9 @@ const workspaces: Workspace[] = (memberWorkspaces || [])
 const totalSub = task.subtasks?.length || 0;
 const completedSub = task.subtasks?.filter((s: any) => s.is_completed).length || 0;
 const progressPercent = totalSub > 0 ? Math.round((completedSub / totalSub) * 100) : 0;
+
+Astro.response.headers.set('Server-Timing', toServerTimingValue(perfTimings));
+logPerf(`/dashboard/task/${taskId}`, perfTimings);
 ---
 <DashboardLayout 
   title={`${task.title} - TaskPilot`} 
@@ -216,55 +243,126 @@ const progressPercent = totalSub > 0 ? Math.round((completedSub / totalSub) * 10
   </div>
 
   <script define:vars={{ currentTaskId: task.id }}>
-    // Toggle Subtask
+    function guardBusy(form, btn, busyText) {
+      if (form.dataset.submitting === 'true') return false;
+      form.dataset.submitting = 'true';
+      if (btn) { btn.disabled = true; btn.dataset.origText = btn.textContent || ''; btn.textContent = busyText; }
+      return true;
+    }
+    function releaseBusy(form, btn) {
+      form.dataset.submitting = 'false';
+      if (btn) { btn.disabled = false; btn.textContent = btn.dataset.origText || btn.textContent; }
+    }
+    // Toggle Subtask — optimistic: coret langsung, rollback bila gagal
     document.querySelectorAll('.subtask-toggle').forEach((cb) => {
-      cb.addEventListener('change', async (e) => {
+      cb.addEventListener('change', (e) => {
         const input = e.target;
         const subtaskId = input.dataset.subtaskId;
         const isCompleted = input.checked;
-
-        await fetch(`/api/subtasks/${subtaskId}`, {
+        const label = input.closest('label')?.querySelector('span');
+        const prevChecked = !isCompleted;
+        if (label) {
+          label.classList.toggle('line-through', isCompleted);
+          label.classList.toggle('text-slate-400', isCompleted);
+          label.classList.toggle('text-slate-700', !isCompleted);
+        }
+        input.disabled = true;
+        fetch('/api/subtasks/' + subtaskId, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ is_completed: isCompleted }),
-        });
-        window.location.reload();
+        }).then((res) => {
+          if (!res.ok) throw new Error('fail');
+        }).catch(() => {
+          input.checked = prevChecked;
+          if (label) {
+            label.classList.toggle('line-through', prevChecked);
+            label.classList.toggle('text-slate-400', prevChecked);
+            label.classList.toggle('text-slate-700', !prevChecked);
+          }
+          alert('Gagal menyimpan checklist — dikembalikan');
+        }).finally(() => { input.disabled = false; });
       });
     });
 
-    // Add Subtask
+    // Add Subtask — tanpa reload: append ke list langsung
     const subtaskForm = document.getElementById('add-subtask-form');
-    subtaskForm?.addEventListener('submit', async (e) => {
+    subtaskForm?.addEventListener('submit', (e) => {
       e.preventDefault();
+      const form = subtaskForm;
+      const btn = form.querySelector('button[type="submit"]');
+      if (!guardBusy(form, btn, 'Menambah...')) return;
       const formData = new FormData(subtaskForm);
-      const res = await fetch(`/api/tasks/${currentTaskId}/subtasks`, {
+      fetch('/api/tasks/' + currentTaskId + '/subtasks', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ title: formData.get('title') }),
-      });
-      if (res.ok) window.location.reload();
+      }).then(async (res) => {
+        if (!res.ok) {
+          const d = await res.json().catch(() => ({}));
+          throw new Error(d.error || 'fail');
+        }
+        const created = await res.json().catch(() => null);
+        form.reset();
+        const container = document.getElementById('subtasks-container');
+        if (container && created && created.id) {
+          const label = document.createElement('label');
+          label.className = 'flex items-center gap-3 p-2 hover:bg-slate-50 rounded-xl cursor-pointer';
+          const cb = document.createElement('input');
+          cb.type = 'checkbox';
+          cb.className = 'subtask-toggle w-4 h-4 shrink-0 text-indigo-600 rounded cursor-pointer';
+          cb.dataset.subtaskId = created.id;
+          const span = document.createElement('span');
+          span.className = 'text-xs break-words min-w-0 flex-1 text-slate-700';
+          span.textContent = String(created.title || formData.get('title') || 'Checklist');
+          label.appendChild(cb); label.appendChild(span);
+          container.appendChild(label);
+          cb.addEventListener('change', () => cb.dispatchEvent(new Event('change')));
+        } else { window.location.reload(); }
+      }).catch((err) => {
+        alert(err.message || 'Gagal menambah checklist');
+      }).finally(() => releaseBusy(form, btn));
     });
 
-    // Add Comment
+    // Add Comment — tanpa reload bila API mengembalikan komentar
     const commentForm = document.getElementById('add-comment-form');
-    commentForm?.addEventListener('submit', async (e) => {
+    commentForm?.addEventListener('submit', (e) => {
       e.preventDefault();
+      const form = commentForm;
+      const btn = form.querySelector('button[type="submit"]');
+      if (!guardBusy(form, btn, 'Mengirim...')) return;
       const formData = new FormData(commentForm);
-      const res = await fetch(`/api/tasks/${currentTaskId}/comments`, {
+      fetch('/api/tasks/' + currentTaskId + '/comments', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ content: formData.get('content') }),
-      });
-      if (res.ok) window.location.reload();
+      }).then(async (res) => {
+        if (!res.ok) {
+          const d = await res.json().catch(() => ({}));
+          throw new Error(d.error || 'fail');
+        }
+        form.reset();
+        window.location.reload();
+      }).catch((err) => {
+        alert(err.message || 'Gagal mengirim komentar');
+      }).finally(() => releaseBusy(form, btn));
     });
 
     // Delete Task
     const deleteBtn = document.getElementById('delete-task-btn');
-    deleteBtn?.addEventListener('click', async () => {
-      if (confirm('Apakah Anda yakin ingin menghapus tugas ini?')) {
-        const res = await fetch(`/api/tasks/${currentTaskId}`, { method: 'DELETE' });
+    deleteBtn?.addEventListener('click', () => {
+      if (!confirm('Apakah Anda yakin ingin menghapus tugas ini?')) return;
+      deleteBtn.disabled = true;
+      const orig = deleteBtn.textContent;
+      deleteBtn.textContent = 'Menghapus...';
+      fetch('/api/tasks/' + currentTaskId, { method: 'DELETE' }).then((res) => {
         if (res.ok) window.location.href = '/dashboard';
-      }
+        else throw new Error('fail');
+      }).catch(() => {
+        alert('Gagal menghapus tugas');
+        deleteBtn.disabled = false;
+        deleteBtn.textContent = orig;
+      });
     });
   </script>
 </DashboardLayout>

@@ -1,11 +1,18 @@
 import type { APIRoute } from 'astro';
 import { createAstroSupabaseClient } from '../../../lib/supabase';
 import { forbiddenWorkspace, getMaterialWorkspaceId, isWorkspaceMember } from '../../../lib/workspace-auth';
+import { isMissingMaterialsTableError, missingMaterialsTableResponse } from '../../../lib/supabase-errors';
 
 async function authorize(supabase: any, userId: string, materialId: string) {
-  const workspaceId = await getMaterialWorkspaceId(supabase, materialId);
-  if (!workspaceId || !(await isWorkspaceMember(supabase, userId, workspaceId))) return null;
-  return workspaceId;
+  try {
+    const workspaceId = await getMaterialWorkspaceId(supabase, materialId);
+    if (!workspaceId || !(await isWorkspaceMember(supabase, userId, workspaceId))) return null;
+    return workspaceId;
+  } catch (err) {
+    // Tabel materi belum ada -> anggap "blocked" supaya caller bisa bedakan via error khusus.
+    if (isMissingMaterialsTableError(err)) throw err;
+    return null;
+  }
 }
 
 // PATCH /api/materials/:id — ubah materi (semua anggota workspace boleh tulis).
@@ -16,7 +23,12 @@ export const PATCH: APIRoute = async ({ params, request, cookies }) => {
 
   const materialId = params.id;
   if (!materialId) return new Response(JSON.stringify({ error: 'Material ID required' }), { status: 400 });
-  if (!(await authorize(supabase, user.id, materialId))) return forbiddenWorkspace();
+  try {
+    if (!(await authorize(supabase, user.id, materialId))) return forbiddenWorkspace();
+  } catch (err) {
+    if (isMissingMaterialsTableError(err)) return missingMaterialsTableResponse();
+    return forbiddenWorkspace();
+  }
 
   try {
     const body = await request.json();
@@ -36,9 +48,13 @@ export const PATCH: APIRoute = async ({ params, request, cookies }) => {
       .select()
       .single();
 
-    if (error) return new Response(JSON.stringify({ error: error.message }), { status: 400 });
+    if (error) {
+      if (isMissingMaterialsTableError(error)) return missingMaterialsTableResponse();
+      return new Response(JSON.stringify({ error: error.message }), { status: 400 });
+    }
     return new Response(JSON.stringify(data), { status: 200 });
   } catch (err: any) {
+    if (isMissingMaterialsTableError(err)) return missingMaterialsTableResponse();
     return new Response(JSON.stringify({ error: err.message || 'Gagal memperbarui materi' }), { status: 500 });
   }
 };
@@ -51,9 +67,17 @@ export const DELETE: APIRoute = async ({ params, request, cookies }) => {
 
   const materialId = params.id;
   if (!materialId) return new Response(JSON.stringify({ error: 'Material ID required' }), { status: 400 });
-  if (!(await authorize(supabase, user.id, materialId))) return forbiddenWorkspace();
+  try {
+    if (!(await authorize(supabase, user.id, materialId))) return forbiddenWorkspace();
+  } catch (err) {
+    if (isMissingMaterialsTableError(err)) return missingMaterialsTableResponse();
+    return forbiddenWorkspace();
+  }
 
   const { error } = await supabase.from('workspace_materials').delete().eq('id', materialId);
-  if (error) return new Response(JSON.stringify({ error: error.message }), { status: 400 });
+  if (error) {
+    if (isMissingMaterialsTableError(error)) return missingMaterialsTableResponse();
+    return new Response(JSON.stringify({ error: error.message }), { status: 400 });
+  }
   return new Response(JSON.stringify({ success: true }), { status: 200 });
 };

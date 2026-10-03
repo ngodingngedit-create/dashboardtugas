@@ -219,23 +219,42 @@ const workspaces: Workspace[] = (memberWorkspaces || [])
 
     form?.addEventListener('submit', async (e) => {
       e.preventDefault();
+      const submitBtn = form.querySelector('button[type="submit"]') as HTMLButtonElement;
+      // Cegah double-submit (klik 2x / Enter 2x) yang bikin duplicate key unique_workspace_user
+      if (form.dataset.submitting === 'true') return;
+      form.dataset.submitting = 'true';
+      if (submitBtn) {
+        submitBtn.disabled = true;
+        submitBtn.dataset.origText = submitBtn.textContent || '';
+        submitBtn.textContent = 'Membuat...';
+      }
       const formData = new FormData(form);
       const payload = {
         name: formData.get('name'),
         description: formData.get('description'),
       };
 
-      const res = await fetch('/api/workspaces', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
+      try {
+        const res = await fetch('/api/workspaces', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
 
-      if (res.ok) {
-        window.location.reload();
-      } else {
-        const data = await res.json();
-        alert(data.error || 'Gagal membuat workspace');
+        if (res.ok) {
+          window.location.reload();
+        } else {
+          const data = await res.json();
+          alert(data.error || 'Gagal membuat workspace');
+        }
+      } catch (err) {
+        alert('Gagal membuat workspace: koneksi bermasalah');
+      } finally {
+        form.dataset.submitting = 'false';
+        if (submitBtn) {
+          submitBtn.disabled = false;
+          submitBtn.textContent = submitBtn.dataset.origText || 'Buat Workspace';
+        }
       }
     });
     // Handle Invite Team Link Generation

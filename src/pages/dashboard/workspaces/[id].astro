@@ -1,10 +1,14 @@
 ---
 import DashboardLayout from '../../../layouts/DashboardLayout.astro';
 import { createAstroSupabaseClient } from '../../../lib/supabase';
+import { logPerf, timed, toServerTimingValue, type TimingEntry } from '../../../lib/perf';
 import type { Workspace, WorkspaceMaterial } from '../../../types/database';
 
+// Fase 0: instrumentasi halaman materi.
+const perfTimings: TimingEntry[] = [];
+
 const supabase = createAstroSupabaseClient(Astro.request, Astro.cookies);
-const { data: { user } } = await supabase.auth.getUser();
+const { data: { user } } = await timed('page-getUser', () => supabase.auth.getUser(), perfTimings);
 if (!user) {
   return Astro.redirect('/login');
 }
@@ -12,12 +16,17 @@ if (!user) {
 const workspaceId = Astro.params.id;
 
 // Pastikan user adalah anggota workspace ini (isolasi per-login).
-const { data: myMembership } = await supabase
-  .from('workspace_members')
-  .select('role')
-  .eq('workspace_id', workspaceId)
-  .eq('user_id', user.id)
-  .single();
+const { data: myMembership } = await timed(
+  'page-membership',
+  () =>
+    supabase
+      .from('workspace_members')
+      .select('role')
+      .eq('workspace_id', workspaceId)
+      .eq('user_id', user.id)
+      .single(),
+  perfTimings
+);
 
 if (!myMembership) {
   return Astro.redirect('/dashboard/workspaces');
@@ -25,39 +34,71 @@ if (!myMembership) {
 const myRole = (myMembership as any).role as string;
 const isOwner = myRole === 'owner';
 
-const { data: workspace } = await supabase
-  .from('workspaces')
-  .select('*')
-  .eq('id', workspaceId)
-  .single();
+const { data: workspace } = await timed(
+  'page-workspace',
+  () =>
+    supabase
+      .from('workspaces')
+      .select('*')
+      .eq('id', workspaceId)
+      .single(),
+  perfTimings
+);
 
 if (!workspace) {
   return Astro.redirect('/dashboard/workspaces');
 }
 
-const { data: profile } = await supabase
-  .from('profiles')
-  .select('*')
-  .eq('id', user.id)
-  .single();
+const { data: profile } = await timed(
+  'page-profile',
+  () =>
+    supabase
+      .from('profiles')
+      .select('*')
+      .eq('id', user.id)
+      .single(),
+  perfTimings
+);
 
-const { data: memberWorkspaces } = await supabase
-  .from('workspace_members')
-  .select('workspace:workspaces (*)')
-  .eq('user_id', user.id);
+const { data: memberWorkspaces } = await timed(
+  'page-members',
+  () =>
+    supabase
+      .from('workspace_members')
+      .select('workspace:workspaces (*)')
+      .eq('user_id', user.id),
+  perfTimings
+);
 
 const workspaces: Workspace[] = (memberWorkspaces || [])
   .map((m: any) => m.workspace)
   .filter(Boolean);
 
 // Materi workspace ini (teks + link). Semua anggota boleh baca & tulis.
-const { data: materialsData } = await supabase
-  .from('workspace_materials')
-  .select('*, author:profiles!workspace_materials_created_by_fkey (id, full_name, avatar_url)')
-  .eq('workspace_id', workspaceId)
-  .order('updated_at', { ascending: false });
+// Jika tabel materi belum dimigrasi, tampilkan banner alih-alih halaman seolah kosong.
+const { data: materialsData, error: materialsError } = await timed(
+  'page-materials',
+  () =>
+    supabase
+      .from('workspace_materials')
+      .select('*, author:profiles!workspace_materials_created_by_fkey (id, full_name, avatar_url)')
+      .eq('workspace_id', workspaceId)
+      .order('updated_at', { ascending: false }),
+  perfTimings
+);
+
+const materialsLoadFailed = Boolean(
+  materialsError &&
+    (() => {
+      const msg = `${(materialsError as any)?.message ?? ''} ${(materialsError as any)?.details ?? ''}`.toLowerCase();
+      return msg.includes('could not find the table') || msg.includes('schema cache') || (materialsError as any)?.code === 'PGRST205';
+    })()
+);
 
 const materials: WorkspaceMaterial[] = (materialsData as any[]) || [];
+
+Astro.response.headers.set('Server-Timing', toServerTimingValue(perfTimings));
+logPerf(`/dashboard/workspaces/${workspaceId}`, perfTimings);
 ---
 
 <DashboardLayout
@@ -99,6 +140,16 @@ const materials: WorkspaceMaterial[] = (materialsData as any[]) || [];
     </div>
 
     <div id="materials-list" class="space-y-3">
+      {materialsLoadFailed && (
+        <div class="bg-amber-50 border border-amber-200 rounded-2xl p-5 text-xs text-amber-800 leading-relaxed">
+          <p class="font-bold text-sm text-amber-900">Tabel materi belum tersedia di database</p>
+          <p class="mt-1">
+            Minta admin/owner database menjalankan <code class="font-mono bg-amber-100 px-1 rounded">supabase/workspace-materials.sql</code>
+            {' '}di Supabase Dashboard &gt; SQL Editor, lalu jalankan
+            {' '}<code class="font-mono bg-amber-100 px-1 rounded">NOTIFY pgrst, 'reload schema';</code> dan muat ulang halaman ini.
+          </p>
+        </div>
+      )}
       {materials.map((m: any) => (
         <article
           class="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs"
@@ -221,27 +272,52 @@ const materials: WorkspaceMaterial[] = (materialsData as any[]) || [];
         });
       });
     });
-    form?.addEventListener('submit', async (e) => {
+    form?.addEventListener('submit', (e) => {
       e.preventDefault();
+      const saveBtn = form.querySelector('button[type="submit"]');
+      if (form.dataset.submitting === 'true') return;
+      form.dataset.submitting = 'true';
+      const origText = saveBtn ? saveBtn.textContent : '';
+      if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'Menyimpan...'; }
       const mid = idInput?.value;
       const payload = { title: titleInput?.value, content: contentInput?.value, link_url: linkInput?.value };
-      const url = mid ? `/api/materials/${mid}` : `/api/workspaces/${workspaceId}/materials`;
-      const res = await fetch(url, { method: mid ? 'PATCH' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-      if (res.ok) { window.location.reload(); }
-      else { const data = await res.json().catch(() => ({})); alert(data.error || 'Gagal menyimpan materi'); }
-    });
-    document.querySelectorAll('.material-delete-btn').forEach((btn) => {
-      btn.addEventListener('click', async () => {
-        if (!confirm('Hapus materi ini?')) return;
-        const res = await fetch(`/api/materials/${btn.dataset.materialId}`, { method: 'DELETE' });
-        if (res.ok) window.location.reload(); else alert('Gagal menghapus materi');
+      const url = mid ? '/api/materials/' + mid : '/api/workspaces/' + workspaceId + '/materials';
+      fetch(url, { method: mid ? 'PATCH' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }).then(async (res) => {
+        if (res.ok) { window.location.reload(); }
+        else { const data = await res.json().catch(() => ({})); alert(data.error || 'Gagal menyimpan materi'); }
+      }).catch(() => alert('Gagal menyimpan materi: koneksi bermasalah')).finally(() => {
+        form.dataset.submitting = 'false';
+        if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = origText; }
       });
     });
-    document.getElementById('delete-workspace-btn')?.addEventListener('click', async () => {
+    document.querySelectorAll('.material-delete-btn').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        if (!confirm('Hapus materi ini?')) return;
+        btn.disabled = true;
+        const orig = btn.textContent;
+        btn.textContent = 'Menghapus...';
+        fetch('/api/materials/' + btn.dataset.materialId, { method: 'DELETE' }).then((res) => {
+          if (res.ok) {
+            btn.closest('article')?.remove();
+          } else { throw new Error('fail'); }
+        }).catch(() => {
+          alert('Gagal menghapus materi');
+          btn.disabled = false;
+          btn.textContent = orig;
+        });
+      });
+    });
+    document.getElementById('delete-workspace-btn')?.addEventListener('click', () => {
       if (!confirm('Hapus workspace ini beserta seluruh tugas dan materinya? Tindakan ini tidak bisa dibatalkan.')) return;
-      const res = await fetch(`/api/workspaces/${workspaceId}`, { method: 'DELETE' });
-      if (res.ok) { window.location.href = '/dashboard/workspaces'; }
-      else { const data = await res.json().catch(() => ({})); alert(data.error || 'Gagal menghapus workspace'); }
+      const delBtn = document.getElementById('delete-workspace-btn');
+      if (delBtn) { delBtn.disabled = true; delBtn.textContent = 'Menghapus...'; }
+      fetch('/api/workspaces/' + workspaceId, { method: 'DELETE' }).then(async (res) => {
+        if (res.ok) { window.location.href = '/dashboard/workspaces'; }
+        else { const data = await res.json().catch(() => ({})); throw new Error(data.error || 'Gagal menghapus workspace'); }
+      }).catch((err) => {
+        alert(err.message || 'Gagal menghapus workspace');
+        if (delBtn) { delBtn.disabled = false; delBtn.textContent = 'Hapus Workspace Ini'; }
+      });
     });
   </script>
 

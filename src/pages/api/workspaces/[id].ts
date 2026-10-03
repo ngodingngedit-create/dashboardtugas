@@ -31,8 +31,14 @@ export const DELETE: APIRoute = async ({ params, request, cookies }) => {
     await supabase.from('task_tags').delete().in('task_id', taskIds);
   }
   await supabase.from('tags').delete().eq('workspace_id', workspaceId);
-  // Tabel materi mungkin belum ada di DB lama — abaikan errornya.
-  await supabase.from('workspace_materials').delete().eq('workspace_id', workspaceId);
+  // Tabel materi mungkin belum ada di DB lama — abaikan errornya supaya
+  // hapus workspace tetap jalan. Supabase mengembalikan { error }, bukan throw,
+  // jadi bungkus try/catch juga untuk keamanan network.
+  try {
+    await supabase.from('workspace_materials').delete().eq('workspace_id', workspaceId);
+  } catch {
+    // Abaikan: DB lama belum punya tabel workspace_materials.
+  }
   await supabase.from('tasks').delete().eq('workspace_id', workspaceId);
   await supabase.from('workspace_invites').delete().eq('workspace_id', workspaceId);
   await supabase.from('workspace_members').delete().eq('workspace_id', workspaceId);

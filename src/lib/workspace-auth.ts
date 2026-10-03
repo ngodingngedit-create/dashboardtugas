@@ -70,11 +70,17 @@ export async function getMaterialWorkspaceId(
   materialId: string
 ): Promise<string | null> {
   if (!materialId) return null;
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from('workspace_materials')
     .select('workspace_id')
     .eq('id', materialId)
     .single();
+  if (error) {
+    // Lempar apa adanya supaya caller bisa bedakan:
+    // tabel belum ada (PGRST205/schema cache) vs. materi tidak ditemukan / RLS.
+    // Lihat src/lib/supabase-errors.ts:isMissingMaterialsTableError().
+    throw error;
+  }
   return (data?.workspace_id as string) ?? null;
 }
 

@@ -2,6 +2,7 @@ import type { APIRoute } from 'astro';
 import { createAstroSupabaseClient } from '../../../../lib/supabase';
 import { ensureUserProfile } from '../../../../lib/auth-helpers';
 import { forbiddenWorkspace, isWorkspaceMember } from '../../../../lib/workspace-auth';
+import { isMissingMaterialsTableError, missingMaterialsTableResponse } from '../../../../lib/supabase-errors';
 
 // GET /api/workspaces/:id/materials — daftar materi (semua anggota boleh baca).
 export const GET: APIRoute = async ({ params, request, cookies }) => {
@@ -19,7 +20,10 @@ export const GET: APIRoute = async ({ params, request, cookies }) => {
     .eq('workspace_id', workspaceId)
     .order('updated_at', { ascending: false });
 
-  if (error) return new Response(JSON.stringify({ error: error.message }), { status: 400 });
+  if (error) {
+    if (isMissingMaterialsTableError(error)) return missingMaterialsTableResponse();
+    return new Response(JSON.stringify({ error: error.message }), { status: 400 });
+  }
   return new Response(JSON.stringify(data || []), { status: 200 });
 };
 
@@ -51,7 +55,10 @@ export const POST: APIRoute = async ({ params, request, cookies }) => {
       .select()
       .single();
 
-    if (error) return new Response(JSON.stringify({ error: error.message }), { status: 400 });
+    if (error) {
+      if (isMissingMaterialsTableError(error)) return missingMaterialsTableResponse();
+      return new Response(JSON.stringify({ error: error.message }), { status: 400 });
+    }
     return new Response(JSON.stringify(data), { status: 201 });
   } catch (err: any) {
     return new Response(JSON.stringify({ error: err.message || 'Gagal menyimpan materi' }), { status: 500 });

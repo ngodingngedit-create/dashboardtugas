@@ -15,8 +15,16 @@ export const POST: APIRoute = async ({ request, cookies }) => {
       return new Response(JSON.stringify({ error: 'Nama workspace minimal 2 karakter' }), { status: 400 });
     }
 
-    // Pastikan profile user ada di tabel public.profiles untuk menghindari foreign key violation
-    await ensureUserProfile(supabase, user);
+    // Pastikan profile user ada di tabel public.profiles untuk menghindari foreign key violation.
+    // Fail-fast: jangan lanjut insert workspace kalau profile gagal dibuat.
+    try {
+      await ensureUserProfile(supabase, user);
+    } catch (profileErr: any) {
+      return new Response(
+        JSON.stringify({ error: profileErr.message || 'Gagal membuat profil user' }),
+        { status: 500 }
+      );
+    }
 
     const slug = name
       .toLowerCase()
@@ -40,19 +48,33 @@ export const POST: APIRoute = async ({ request, cookies }) => {
 
     // Daftarkan pembuat sebagai owner agar workspace muncul di daftar miliknya
     // (daftar workspace diambil dari tabel workspace_members per user).
-    const { error: memberError } = await supabase.from('workspace_members').insert({
-      workspace_id: workspace.id,
-      user_id: user.id,
-      role: 'owner',
-    });
+    // Pakai upsert agar idempotent: kalau DB punya trigger auto-add owner,
+    // atau user double-klik submit, tidak error "duplicate key unique_workspace_user".
+    // Rollback (hapus workspace) HANYA untuk error selain duplikat.
+    const { error: memberError } = await supabase.from('workspace_members').upsert(
+      {
+        workspace_id: workspace.id,
+        user_id: user.id,
+        role: 'owner',
+      },
+      { onConflict: 'workspace_id,user_id' }
+    );
 
     if (memberError) {
-      // Rollback: hapus workspace yang baru dibuat agar tidak jadi yatim / terlihat siapa saja
-      await supabase.from('workspaces').delete().eq('id', workspace.id);
-      return new Response(
-        JSON.stringify({ error: `Gagal mendaftarkan owner workspace: ${memberError.message}` }),
-        { status: 500 }
-      );
+      const isDuplicate =
+        memberError.code === '23505' ||
+        (memberError.message || '').toLowerCase().includes('duplicate key') ||
+        (memberError.message || '').toLowerCase().includes('unique_workspace_user');
+
+      // Kalau cuma duplikat (owner sudah terdaftar via trigger / retry),
+      // anggap sukses — jangan hapus workspace yang baru dibuat.
+      if (!isDuplicate) {
+        await supabase.from('workspaces').delete().eq('id', workspace.id);
+        return new Response(
+          JSON.stringify({ error: `Gagal mendaftarkan owner workspace: ${memberError.message}` }),
+          { status: 500 }
+        );
+      }
     }
 
     return new Response(JSON.stringify(workspace), { status: 201 });

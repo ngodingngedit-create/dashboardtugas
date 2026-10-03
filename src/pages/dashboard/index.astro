@@ -1,21 +1,36 @@
 ---
 import DashboardLayout from '../../layouts/DashboardLayout.astro';
 import { createAstroSupabaseClient } from '../../lib/supabase';
+import { logPerf, timed, toServerTimingValue, type TimingEntry } from '../../lib/perf';
 import type { Workspace } from '../../types/database';
 
+// Fase 0: ukur pemecah TTFB halaman board (lihat DevTools > Network > header Server-Timing
+// + Vercel Functions Logs "[perf] /dashboard ..."). Tidak mengubah logika query.
+const perfTimings: TimingEntry[] = [];
+
 const supabase = createAstroSupabaseClient(Astro.request, Astro.cookies);
-const { data: { user } } = await supabase.auth.getUser();
+const { data: { user } } = await timed('page-getUser', () => supabase.auth.getUser(), perfTimings);
 
-const { data: profile } = await supabase
-  .from('profiles')
-  .select('*')
-  .eq('id', user?.id)
-  .single();
+const { data: profile } = await timed(
+  'page-profile',
+  () =>
+    supabase
+      .from('profiles')
+      .select('*')
+      .eq('id', user?.id)
+      .single(),
+  perfTimings
+);
 
-const { data: memberWorkspaces } = await supabase
-  .from('workspace_members')
-  .select('workspace:workspaces (*)')
-  .eq('user_id', user?.id);
+const { data: memberWorkspaces } = await timed(
+  'page-members',
+  () =>
+    supabase
+      .from('workspace_members')
+      .select('workspace:workspaces (*)')
+      .eq('user_id', user?.id),
+  perfTimings
+);
 
 const workspaces: Workspace[] = (memberWorkspaces || [])
   .map((m: any) => m.workspace)
@@ -26,18 +41,26 @@ let currentWorkspace = workspaces.find((w) => w.id === urlWorkspaceId) || worksp
 
 let tasks: any[] = [];
 if (currentWorkspace) {
-  const { data: tasksData } = await supabase
-    .from('tasks')
-    .select(`
+  const { data: tasksData } = await timed(
+    'page-tasks',
+    () =>
+      supabase
+        .from('tasks')
+        .select(`
       *,
       creator:profiles!tasks_created_by_fkey (id, full_name, avatar_url),
       subtasks (*)
     `)
-    .eq('workspace_id', currentWorkspace.id)
-    .order('created_at', { ascending: false });
+        .eq('workspace_id', currentWorkspace.id)
+        .order('created_at', { ascending: false }),
+    perfTimings
+  );
 
   tasks = tasksData || [];
 }
+
+Astro.response.headers.set('Server-Timing', toServerTimingValue(perfTimings));
+logPerf('/dashboard', perfTimings);
 
 const statusColumns = [
   { key: 'todo', label: 'To Do', color: 'bg-amber-500' },
@@ -97,17 +120,17 @@ const statusColumns = [
                 <span class={`w-2.5 h-2.5 rounded-full ${col.color}`}></span>
                 <h3 class="font-bold text-xs uppercase tracking-wider text-slate-700">{col.label}</h3>
               </div>
-              <span class="text-xs font-bold text-slate-400 bg-slate-200 px-2 py-0.5 rounded-full">
+              <span data-col-count={col.key} class="text-xs font-bold text-slate-400 bg-slate-200 px-2 py-0.5 rounded-full">
                 {colTasks.length}
               </span>
             </div>
 
-            <div class="space-y-3 flex-1">
+            <div class="space-y-3 flex-1" data-col-body={col.key}>
               {colTasks.map((task) => {
                 const totalSub = task.subtasks?.length || 0;
                 const completedSub = task.subtasks?.filter((s: any) => s.is_completed).length || 0;
                 return (
-                  <div class="bg-white p-4 rounded-xl shadow-xs border border-slate-200 hover:shadow-md transition min-w-0">
+                  <div data-task-card={task.id} class="bg-white p-4 rounded-xl shadow-xs border border-slate-200 hover:shadow-md transition min-w-0">
                     <div class="flex items-center justify-between gap-2 mb-2">
                       <span class={`shrink-0 text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-md ${
                         task.priority === 'urgent' ? 'bg-rose-50 text-rose-600' :
@@ -120,7 +143,7 @@ const statusColumns = [
 
                       <select 
                         class="task-status-select min-w-0 max-w-[130px] truncate text-[11px] bg-transparent text-slate-400 hover:text-slate-600 font-medium cursor-pointer focus:outline-none"
-                        data-task-id={task.id}
+                        data-task-id={task.id} data-prev-status={task.status}
                       >
                         {statusColumns.map((c) => (
                           <option value={c.key} selected={c.key === task.status}>
@@ -238,8 +261,13 @@ const statusColumns = [
     openBtn?.addEventListener('click', () => modal?.classList.remove('hidden'));
     closeBtn?.addEventListener('click', () => modal?.classList.add('hidden'));
 
-    form?.addEventListener('submit', async (e) => {
+    form?.addEventListener('submit', (e) => {
       e.preventDefault();
+      const submitBtn = form.querySelector('button[type="submit"]') as HTMLButtonElement;
+      if ((form as any).dataset.submitting === 'true') return;
+      (form as any).dataset.submitting = 'true';
+      const origText = submitBtn ? submitBtn.textContent : '';
+      if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = 'Menyimpan...'; }
       const formData = new FormData(form);
       const payload = {
         workspace_id: formData.get('workspace_id'),
@@ -249,37 +277,84 @@ const statusColumns = [
         due_date: formData.get('due_date'),
       };
 
-      const res = await fetch('/api/tasks', {
+      fetch('/api/tasks', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
+      }).then(async (res) => {
+        if (res.ok) {
+          const created = await res.json().catch(() => null);
+          modal?.classList.add('hidden');
+          form.reset();
+          if (created && created.id && created.status) {
+            const target = document.querySelector('[data-col-body="' + created.status + '"]');
+            const exists = document.querySelector('[data-task-card="' + created.id + '"]');
+            if (target && !exists) {
+              const div = document.createElement('div');
+              div.setAttribute('data-task-card', created.id);
+              div.className = 'bg-white p-4 rounded-xl shadow-xs border border-emerald-200 min-w-0';
+              const title = String(created.title || formData.get('title') || 'Tugas baru');
+              const a = document.createElement('a');
+              a.href = '/dashboard/task/' + created.id;
+              a.className = 'block font-bold text-sm text-slate-800 hover:text-indigo-600 transition mb-1 break-words leading-snug';
+              a.textContent = title;
+              const p = document.createElement('p');
+              p.className = 'text-[11px] text-emerald-600 font-semibold';
+              p.textContent = 'Baru dibuat — muat ulang untuk detail penuh';
+              div.appendChild(a); div.appendChild(p);
+              target.prepend(div);
+              const key = (target as HTMLElement).dataset.colBody;
+              const badge = key ? document.querySelector('[data-col-count="' + key + '"]') : null;
+              if (badge) badge.textContent = String(target.querySelectorAll('[data-task-card]').length);
+              div.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+            } else { window.location.reload(); }
+          } else { window.location.reload(); }
+        } else {
+          const data = await res.json().catch(() => ({}));
+          alert(data.error || 'Gagal menyimpan tugas');
+        }
+      }).catch(() => {
+        alert('Gagal menyimpan tugas: koneksi bermasalah');
+      }).finally(() => {
+        (form as any).dataset.submitting = 'false';
+        if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = origText; }
       });
-
-      if (res.ok) {
-        window.location.reload();
-      } else {
-        const data = await res.json();
-        alert(data.error || 'Gagal menyimpan tugas');
-      }
     });
 
     document.querySelectorAll('.task-status-select').forEach((select) => {
-      select.addEventListener('change', async (e) => {
+      select.addEventListener('change', (e) => {
         const el = e.target as HTMLSelectElement;
         const taskId = el.dataset.taskId;
         const newStatus = el.value;
-
-        const res = await fetch(`/api/tasks/${taskId}`, {
+        const card = taskId ? document.querySelector('[data-task-card="' + taskId + '"]') : null;
+        const prevParent = card?.parentElement || null;
+        const prevNext = card?.nextElementSibling || null;
+        const prevValue = el.dataset.prevStatus || '';
+        el.dataset.prevStatus = newStatus;
+        const target = document.querySelector('[data-col-body="' + newStatus + '"]');
+        if (card && target && card.parentElement !== target) {
+          target.prepend(card);
+          const fromBadge = prevParent ? document.querySelector('[data-col-count="' + (prevParent as HTMLElement).dataset.colBody + '"]') : null;
+          const toBadge = document.querySelector('[data-col-count="' + newStatus + '"]');
+          if (fromBadge && prevParent) fromBadge.textContent = String(prevParent.querySelectorAll('[data-task-card]').length);
+          if (toBadge) toBadge.textContent = String(target.querySelectorAll('[data-task-card]').length);
+        }
+        el.style.opacity = '0.6';
+        fetch('/api/tasks/' + taskId, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ status: newStatus }),
-        });
-
-        if (res.ok) {
-          window.location.reload();
-        } else {
-          alert('Gagal memindahkan status');
-        }
+        }).then((res) => {
+          if (!res.ok) throw new Error('fail');
+          el.dataset.prevStatus = newStatus;
+        }).catch(() => {
+          if (card && prevParent) {
+            if (prevNext && prevNext.parentElement === prevParent) prevParent.insertBefore(card, prevNext);
+            else prevParent.prepend(card);
+          }
+          if (prevValue) el.value = prevValue;
+          alert('Gagal memindahkan status — dikembalikan');
+        }).finally(() => { el.style.opacity = ''; });
       });
     });
   </script>

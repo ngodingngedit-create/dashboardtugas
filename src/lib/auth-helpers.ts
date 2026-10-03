@@ -20,11 +20,18 @@ export async function ensureUserProfile(supabase: SupabaseClient, user: User) {
       '_' +
       user.id.substring(0, 5);
 
-    await supabase.from('profiles').upsert({
-      id: user.id,
-      full_name: fullName,
-      username: username,
-      avatar_url: user.user_metadata?.avatar_url || null,
-    });
+    const { error } = await supabase.from('profiles').upsert(
+      {
+        id: user.id,
+        full_name: fullName,
+        username: username,
+        avatar_url: user.user_metadata?.avatar_url || null,
+      },
+      { onConflict: 'id' }
+    );
+
+    if (error) {
+      throw new Error(`Gagal membuat profil user: ${error.message}`);
+    }
   }
 }

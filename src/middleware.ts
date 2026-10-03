@@ -1,5 +1,6 @@
 import { defineMiddleware } from 'astro:middleware';
 import { createAstroSupabaseClient } from './lib/supabase';
+import { logPerf, timed, toServerTimingValue, type TimingEntry } from './lib/perf';
 
 // Rute publik yang dapat diakses tanpa login
 const PUBLIC_ROUTES = ['/login', '/register', '/api/auth/login', '/api/auth/register', '/api/auth/logout', '/join/'];
@@ -22,13 +23,15 @@ export const onRequest = defineMiddleware(async (context, next) => {
     return next();
   }
 
+  // Fase 0: ukur biaya auth middleware (1x getUser per request).
+  const timings: TimingEntry[] = [];
   const supabase = createAstroSupabaseClient(request, cookies);
 
   // Pasang supabase client di locals agar bisa diakses di semua halaman jika diperlukan
   (locals as any).supabase = supabase;
 
   // Cek session user saat ini
-  const { data: { user } } = await supabase.auth.getUser();
+  const { data: { user } } = await timed('mw-getUser', () => supabase.auth.getUser(), timings);
   (locals as any).user = user;
 
   const isPublicRoute = PUBLIC_ROUTES.some((route) => pathname.startsWith(route));
@@ -44,6 +47,14 @@ export const onRequest = defineMiddleware(async (context, next) => {
     return redirect(`/login?redirect=${encodeURIComponent(pathname + url.search)}`);
   }
 
-  return next();
+  const response = await next();
+  // Teruskan timing middleware; halaman menimpa/append via Astro.response.headers jika mau.
+  // Di sini kita gabungkan dengan header yang sudah ada dari halaman.
+  const existing = response.headers.get('Server-Timing');
+  const ours = toServerTimingValue(timings);
+  response.headers.set('Server-Timing', existing ? `${existing}, ${ours}` : ours);
+  response.headers.set('X-Middleware-Duration', String(timings.reduce((s, t) => s + t.ms, 0)));
+  logPerf(`mw ${pathname}`, timings);
+  return response;
 });
 
