@@ -1,6 +1,7 @@
 ---
 import DashboardLayout from '../../layouts/DashboardLayout.astro';
 import { createAstroSupabaseClient } from '../../lib/supabase';
+import { dueInfo } from '../../lib/due-date';
 import type { Workspace } from '../../types/database';
 const supabase = createAstroSupabaseClient(Astro.request, Astro.cookies);
 const { data: { user } } = await supabase.auth.getUser();
@@ -18,18 +19,6 @@ if (workspaceIds.length > 0 && user?.id) {
     const d = new Date(a.due_date).getTime() - new Date(b.due_date).getTime();
     return d !== 0 ? d : new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
   });
-}
-const today = new Date(); today.setHours(0,0,0,0);
-function dueInfo(dueDate: string | null, status: string) {
-  if (!dueDate) return { label: 'Tanpa tenggat', tone: 'bg-slate-100 text-slate-500' };
-  const due = new Date(dueDate); due.setHours(0,0,0,0);
-  const diff = Math.round((due.getTime() - today.getTime()) / 86400000);
-  const fmt = due.toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' });
-  if (status === 'done') return { label: fmt, tone: 'bg-emerald-50 text-emerald-600' };
-  if (diff < 0) return { label: `Terlambat • ${fmt}`, tone: 'bg-rose-50 text-rose-600' };
-  if (diff === 0) return { label: `Hari ini • ${fmt}`, tone: 'bg-amber-50 text-amber-700' };
-  if (diff === 1) return { label: `Besok • ${fmt}`, tone: 'bg-blue-50 text-blue-600' };
-  return { label: fmt, tone: 'bg-slate-100 text-slate-600' };
 }
 ---
 <DashboardLayout title="Home - Semua Tugas - TaskPilot" headerTitle="Home - Semua Tugas" user={user} profile={profile} workspaces={workspaces} currentWorkspace={null}>

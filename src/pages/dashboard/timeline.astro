@@ -1,0 +1,232 @@
+---
+import DashboardLayout from '../../layouts/DashboardLayout.astro';
+import { createAstroSupabaseClient } from '../../lib/supabase';
+import type { Workspace } from '../../types/database';
+
+const supabase = createAstroSupabaseClient(Astro.request, Astro.cookies);
+const { data: { user } } = await supabase.auth.getUser();
+
+const { data: profile } = await supabase
+  .from('profiles')
+  .select('*')
+  .eq('id', user?.id)
+  .single();
+
+const { data: memberWorkspaces } = await supabase
+  .from('workspace_members')
+  .select('workspace:workspaces (*)')
+  .eq('user_id', user?.id);
+const workspaces: Workspace[] = (memberWorkspaces || [])
+  .map((m: any) => m.workspace)
+  .filter(Boolean);
+const workspaceIds = workspaces.map((w) => w.id);
+
+// --- Bulan aktif dari query param ?month=YYYY-MM (default: bulan ini) ---
+const monthParam = Astro.url.searchParams.get('month');
+const now = new Date();
+let year = now.getFullYear();
+let month = now.getMonth(); // 0-based
+if (monthParam && /^\d{4}-\d{2}$/.test(monthParam)) {
+  const [y, m] = monthParam.split('-').map(Number);
+  if (m >= 1 && m <= 12) {
+    year = y;
+    month = m - 1;
+  }
+}
+const monthStr = `${year}-${String(month + 1).padStart(2, '0')}`;
+const prev = new Date(year, month - 1, 1);
+const next = new Date(year, month + 1, 1);
+const prevStr = `${prev.getFullYear()}-${String(prev.getMonth() + 1).padStart(2, '0')}`;
+const nextStr = `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, '0')}`;
+const monthLabel = new Date(year, month, 1).toLocaleDateString('id-ID', { month: 'long', year: 'numeric' });
+
+// --- Fetch tugas dengan deadline pada rentang bulan ini (± minggu terlihat) ---
+interface CalTask {
+  id: string;
+  title: string;
+  status: string;
+  due_date: string;
+  workspace?: { name: string } | null;
+}
+let tasks: CalTask[] = [];
+if (workspaceIds.length > 0) {
+  const rangeStart = new Date(year, month - 1, 1).toISOString();
+  const rangeEnd = new Date(year, month + 2, 1).toISOString();
+  const { data } = await supabase
+    .from('tasks')
+    .select('id, title, status, due_date, workspace:workspaces (name)')
+    .in('workspace_id', workspaceIds)
+    .not('due_date', 'is', null)
+    .gte('due_date', rangeStart)
+    .lt('due_date', rangeEnd)
+    .order('due_date', { ascending: true });
+  tasks = (data || []) as unknown as CalTask[];
+}
+
+// Kelompokkan per tanggal lokal (YYYY-MM-DD)
+const dayKey = (d: Date) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const tasksByDay = new Map<string, CalTask[]>();
+for (const t of tasks) {
+  const key = dayKey(new Date(t.due_date));
+  if (!tasksByDay.has(key)) tasksByDay.set(key, []);
+  tasksByDay.get(key)!.push(t);
+}
+
+// --- Bangun grid kalender (minggu mulai Senin) ---
+interface DayCell {
+  date: Date;
+  inMonth: boolean;
+}
+const firstDay = new Date(year, month, 1);
+// getDay(): 0=Minggu..6=Sabtu → offset Senin-first
+const startOffset = (firstDay.getDay() + 6) % 7;
+const daysInMonth = new Date(year, month + 1, 0).getDate();
+const totalCells = Math.ceil((startOffset + daysInMonth) / 7) * 7;
+const cells: DayCell[] = [];
+for (let i = 0; i < totalCells; i++) {
+  const date = new Date(year, month, 1 - startOffset + i);
+  cells.push({ date, inMonth: date.getMonth() === month });
+}
+
+const today = new Date();
+today.setHours(0, 0, 0, 0);
+const todayKey = dayKey(today);
+
+// Warna chip per tugas: pill dengan aksen garis kiri + background lembut
+function chipClass(t: CalTask): string {
+  if (t.status === 'done') return 'border-emerald-400 bg-emerald-50 text-emerald-700 hover:bg-emerald-100';
+  const due = new Date(t.due_date);
+  due.setHours(0, 0, 0, 0);
+  const diff = Math.round((due.getTime() - today.getTime()) / 86400000);
+  if (diff < 0) return 'border-rose-400 bg-rose-50 text-rose-700 hover:bg-rose-100';
+  if (diff === 0) return 'border-amber-400 bg-amber-50 text-amber-800 hover:bg-amber-100';
+  return 'border-blue-400 bg-blue-50 text-blue-700 hover:bg-blue-100';
+}
+function dotClass(t: CalTask): string {
+  if (t.status === 'done') return 'bg-emerald-500';
+  const due = new Date(t.due_date);
+  due.setHours(0, 0, 0, 0);
+  const diff = Math.round((due.getTime() - today.getTime()) / 86400000);
+  if (diff < 0) return 'bg-rose-500';
+  if (diff === 0) return 'bg-amber-500';
+  return 'bg-blue-500';
+}
+
+// Ringkasan bulan aktif
+const monthTasks = tasks.filter((t) => {
+  const d = new Date(t.due_date);
+  return d.getFullYear() === year && d.getMonth() === month;
+});
+const monthDone = monthTasks.filter((t) => t.status === 'done').length;
+const monthOverdue = monthTasks.filter((t) => {
+  if (t.status === 'done') return false;
+  const d = new Date(t.due_date);
+  d.setHours(0, 0, 0, 0);
+  return d.getTime() < today.getTime();
+}).length;
+
+const weekDays = ['Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab', 'Min'];
+const weekDaysFull = ['Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu', 'Minggu'];
+const MAX_CHIPS = 2;
+---
+
+<DashboardLayout
+  title="Timeline - TaskPilot"
+  headerTitle="Timeline Deadline"
+  user={user}
+  profile={profile}
+  workspaces={workspaces}
+  currentWorkspace={null}
+>
+  <div class="max-w-6xl mx-auto space-y-4 sm:space-y-5">
+    <!-- Header kalender -->
+    <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      <div>
+        <h2 class="text-lg sm:text-xl font-bold text-slate-800 capitalize">{monthLabel}</h2>
+        <p class="text-xs text-slate-400 mt-0.5">
+          {monthTasks.length} deadline bulan ini
+          {monthOverdue > 0 && <span class="text-rose-500 font-semibold"> • {monthOverdue} terlewat</span>}
+          {monthDone > 0 && <span class="text-emerald-600 font-semibold"> • {monthDone} selesai</span>}
+        </p>
+      </div>
+      <div class="flex items-center gap-2">
+        <a href={`/dashboard/timeline?month=${prevStr}`} class="px-3 py-2 rounded-xl border border-slate-200 bg-white text-slate-600 text-sm font-semibold hover:bg-slate-50 transition" aria-label="Bulan sebelumnya">‹</a>
+        <a href="/dashboard/timeline" class="px-4 py-2 rounded-xl border border-slate-200 bg-white text-slate-700 text-xs font-bold hover:bg-slate-50 transition">Hari Ini</a>
+        <a href={`/dashboard/timeline?month=${nextStr}`} class="px-3 py-2 rounded-xl border border-slate-200 bg-white text-slate-600 text-sm font-semibold hover:bg-slate-50 transition" aria-label="Bulan berikutnya">›</a>
+      </div>
+    </div>
+
+    {workspaces.length === 0 ? (
+      <div class="text-center py-16 bg-white rounded-2xl border border-slate-200 px-5 sm:px-8">
+        <div class="text-4xl mb-4">🚀</div>
+        <h3 class="text-base sm:text-lg font-bold text-slate-800">Belum Ada Workspace</h3>
+        <p class="text-xs text-slate-400 mt-2 mb-6">Buat workspace terlebih dahulu untuk mulai melihat timeline deadline.</p>
+        <a href="/dashboard/workspaces" class="inline-block px-5 py-2.5 bg-indigo-600 text-white font-bold text-xs rounded-xl hover:bg-indigo-700 transition">Buat Workspace Sekarang</a>
+      </div>
+    ) : (
+      <div class="bg-white rounded-2xl border border-slate-200/80 shadow-xs overflow-hidden">
+        <!-- Header hari -->
+        <div class="grid grid-cols-7 border-b border-slate-200 bg-slate-50/60">
+          {weekDays.map((d, i) => (
+            <div class="py-2.5 text-center text-[10px] sm:text-[11px] font-bold text-slate-400 uppercase tracking-wider">
+              <span class="sm:hidden">{d}</span>
+              <span class="hidden sm:inline">{weekDaysFull[i]}</span>
+            </div>
+          ))}
+        </div>
+
+        <!-- Grid tanggal: garis sejajar via divide, tinggi sel tetap -->
+        <div class="grid grid-cols-7 divide-x divide-y divide-slate-100">
+          {cells.map((cell) => {
+            const key = dayKey(cell.date);
+            const dayTasks = tasksByDay.get(key) || [];
+            const isToday = key === todayKey;
+            return (
+              <div class={`min-w-0 h-20 sm:h-28 flex flex-col overflow-hidden px-1 pt-1 sm:px-1.5 sm:pt-1.5 ${cell.inMonth ? 'bg-white' : 'bg-slate-50/60'}`}>
+                <span class={`inline-flex items-center justify-center w-5 h-5 sm:w-6 sm:h-6 shrink-0 text-[10px] sm:text-xs font-semibold rounded-full ${isToday ? 'bg-indigo-600 text-white' : cell.inMonth ? 'text-slate-700' : 'text-slate-300'}`}>
+                  {cell.date.getDate()}
+                </span>
+
+                <!-- Chip tugas (desktop) -->
+                <div class="hidden sm:flex flex-col gap-1 mt-1 min-h-0 overflow-hidden">
+                  {dayTasks.slice(0, MAX_CHIPS).map((t) => (
+                    <a
+                      href={`/dashboard/task/${t.id}`}
+                      title={`${t.title} • ${t.workspace?.name || 'Workspace'}`}
+                      class={`block truncate rounded-md border-l-2 px-1.5 py-0.5 text-[10px] leading-4 font-semibold transition ${chipClass(t)} ${cell.inMonth ? '' : 'opacity-60'}`}
+                    >
+                      {t.title}
+                    </a>
+                  ))}
+                  {dayTasks.length > MAX_CHIPS && (
+                    <p class="text-[9px] leading-3 font-semibold text-slate-400 px-1">+{dayTasks.length - MAX_CHIPS} lagi</p>
+                  )}
+                </div>
+
+                <!-- Indikator titik (mobile) -->
+                <div class="flex sm:hidden flex-1 flex-wrap content-end items-end gap-1 pb-1">
+                  {dayTasks.slice(0, 3).map((t) => (
+                    <a href={`/dashboard/task/${t.id}`} class={`w-1.5 h-1.5 shrink-0 rounded-full ${dotClass(t)}`} aria-label={t.title}></a>
+                  ))}
+                  {dayTasks.length > 3 && (
+                    <span class="text-[8px] leading-none font-bold text-slate-400">+{dayTasks.length - 3}</span>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    )}
+
+    <!-- Legenda -->
+    <div class="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[11px] font-semibold text-slate-500">
+      <span class="text-slate-400 uppercase tracking-wider text-[10px] font-bold">Legenda:</span>
+      <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-rose-500"></span> Terlewat</span>
+      <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-amber-500"></span> Hari ini</span>
+      <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-blue-500"></span> Akan datang</span>
+      <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-emerald-500"></span> Selesai</span>
+    </div>
+  </div>
+</DashboardLayout>
