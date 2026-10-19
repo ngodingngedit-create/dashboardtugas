@@ -1,0 +1,446 @@
+---
+import DashboardLayout from '../../layouts/DashboardLayout.astro';
+import { createAstroSupabaseClient } from '../../lib/supabase';
+import { DEFAULT_STATUSES } from '../../lib/workspace-config';
+import type { Workspace, CustomStatus, PriorityFormat } from '../../types/database';
+
+const supabase = createAstroSupabaseClient(Astro.request, Astro.cookies);
+const { data: { user } } = await supabase.auth.getUser();
+if (!user) {
+  return Astro.redirect('/login');
+}
+
+const { data: profile } = await supabase
+  .from('profiles')
+  .select('*')
+  .eq('id', user.id)
+  .single();
+
+const { data: memberWorkspaces } = await supabase
+  .from('workspace_members')
+  .select('workspace:workspaces (*), role')
+  .eq('user_id', user.id);
+
+const workspaces: Workspace[] = (memberWorkspaces || [])
+  .map((m: any) => m.workspace)
+  .filter(Boolean);
+
+const urlWorkspaceId = Astro.url.searchParams.get('workspace_id');
+let currentWorkspace: Workspace | null = null;
+
+if (urlWorkspaceId) {
+  currentWorkspace = workspaces.find((w) => w.id === urlWorkspaceId) || null;
+}
+if (!currentWorkspace && workspaces.length > 0) {
+  currentWorkspace = workspaces[0];
+}
+
+const currentMembership = memberWorkspaces?.find((m: any) => m.workspace?.id === currentWorkspace?.id);
+const myRole = currentMembership?.role;
+const canManage = myRole === 'owner' || myRole === 'admin';
+
+const currentStatuses: CustomStatus[] = currentWorkspace?.settings?.statuses && currentWorkspace.settings.statuses.length > 0
+  ? currentWorkspace.settings.statuses
+  : DEFAULT_STATUSES;
+
+const currentPriorityFormat: PriorityFormat = currentWorkspace?.settings?.priority_format || 'text';
+---
+
+<DashboardLayout
+  title="Settings Workspace - TaskPilot"
+  headerTitle="Pengaturan Workspace"
+  user={user}
+  profile={profile}
+  workspaces={workspaces}
+  currentWorkspace={currentWorkspace}
+>
+  {!currentWorkspace ? (
+    <div class="max-w-md mx-auto text-center py-12 px-6 bg-white rounded-2xl border border-slate-200 mt-8">
+      <div class="text-4xl mb-3">⚙️</div>
+      <h3 class="text-base font-bold text-slate-800">Belum Ada Workspace</h3>
+      <p class="text-xs text-slate-400 mt-2 mb-6">Pilih atau buat workspace terlebih dahulu untuk mengatur status dan prioritas.</p>
+      <a href="/dashboard/workspaces" class="inline-block px-4 py-2 bg-indigo-600 text-white font-bold text-xs rounded-xl">
+        Kelola Workspace
+      </a>
+    </div>
+  ) : (
+    <div class="max-w-4xl mx-auto space-y-6">
+      {!canManage && (
+        <div class="p-4 bg-amber-50 border border-amber-200 rounded-xl text-amber-800 text-xs font-medium">
+          Hanya Owner atau Admin yang dapat mengubah pengaturan status dan format prioritas workspace ini. Anda hanya dapat melihat pengaturan saat ini.
+        </div>
+      )}
+
+      <!-- Kartu Format Prioritas -->
+      <div class="bg-white rounded-2xl border border-slate-200 p-5 sm:p-6 shadow-xs">
+        <div class="mb-4">
+          <h2 class="text-sm sm:text-base font-bold text-slate-800">Format Prioritas Tugas</h2>
+          <p class="text-xs text-slate-400 mt-1">Pilih gaya penamaan prioritas yang tampil di Board dan daftar tugas tim.</p>
+        </div>
+
+        <form id="priority-format-form" class="space-y-4">
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <label class="flex items-start gap-3 p-3.5 border rounded-xl cursor-pointer hover:bg-slate-50 transition border-slate-200 has-[:checked]:border-indigo-600 has-[:checked]:bg-indigo-50/40">
+              <input
+                type="radio"
+                name="priority_format"
+                value="text"
+                checked={currentPriorityFormat === 'text'}
+                disabled={!canManage}
+                class="mt-0.5 text-indigo-600 focus:ring-indigo-500"
+              />
+              <div>
+                <p class="text-xs font-bold text-slate-800">Teks Standar (Low, Medium, High, Urgent)</p>
+                <p class="text-[11px] text-slate-400 mt-0.5">Format deskriptif umum yang mudah dipahami semua anggota.</p>
+              </div>
+            </label>
+
+            <label class="flex items-start gap-3 p-3.5 border rounded-xl cursor-pointer hover:bg-slate-50 transition border-slate-200 has-[:checked]:border-indigo-600 has-[:checked]:bg-indigo-50/40">
+              <input
+                type="radio"
+                name="priority_format"
+                value="numeric"
+                checked={currentPriorityFormat === 'numeric'}
+                disabled={!canManage}
+                class="mt-0.5 text-indigo-600 focus:ring-indigo-500"
+              />
+              <div>
+                <p class="text-xs font-bold text-slate-800">Tingkat Numerik (P0, P1, P2, P3)</p>
+                <p class="text-[11px] text-slate-400 mt-0.5">Gaya sprint teknis (P0: Urgent, P1: High, P2: Medium, P3: Low).</p>
+              </div>
+            </label>
+          </div>
+
+          {canManage && (
+            <div class="flex justify-end pt-2">
+              <button
+                type="submit"
+                id="save-priority-btn"
+                class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs rounded-xl shadow-xs transition"
+              >
+                Simpan Format Prioritas
+              </button>
+            </div>
+          )}
+        </form>
+      </div>
+
+      <!-- Kartu Pengaturan Status Kolom -->
+      <div class="bg-white rounded-2xl border border-slate-200 p-5 sm:p-6 shadow-xs">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
+          <div>
+            <h2 class="text-sm sm:text-base font-bold text-slate-800">Status Tugas (Kolom Board)</h2>
+            <p class="text-xs text-slate-400 mt-1">Ubah nama, warna, atau tambah status kustom baru seperti Cancel, Failed, Blocked, Testing, dll.</p>
+          </div>
+          {canManage && (
+            <button
+              type="button"
+              id="add-status-row-btn"
+              class="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs rounded-xl transition shrink-0 self-start sm:self-auto"
+            >
+              + Tambah Status Baru
+            </button>
+          )}
+        </div>
+
+        <div class="overflow-x-auto">
+          <table class="w-full text-left text-xs">
+            <thead>
+              <tr class="border-b border-slate-100 text-[11px] font-bold text-slate-400 uppercase tracking-wider">
+                <th class="py-2.5 px-3">Key ID</th>
+                <th class="py-2.5 px-3">Nama Label</th>
+                <th class="py-2.5 px-3">Warna Titik</th>
+                <th class="py-2.5 px-3 text-right">Aksi</th>
+              </tr>
+            </thead>
+            <tbody id="status-table-body" class="divide-y divide-slate-100 font-medium">
+              {currentStatuses.map((st) => (
+                <tr class="status-row" data-key={st.key}>
+                  <td class="py-3 px-3">
+                    <span class="status-key font-mono text-[11px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded">
+                      {st.key}
+                    </span>
+                  </td>
+                  <td class="py-3 px-3">
+                    <input
+                      type="text"
+                      class="status-label-input w-full max-w-[200px] px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-semibold text-slate-700 focus:outline-none focus:border-indigo-500"
+                      value={st.label}
+                      disabled={!canManage}
+                    />
+                  </td>
+                  <td class="py-3 px-3">
+                    <select
+                      class="status-color-select px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-700 focus:outline-none"
+                      disabled={!canManage}
+                    >
+                      <option value="bg-amber-500" selected={st.color === 'bg-amber-500'}>Amber (Kuning)</option>
+                      <option value="bg-blue-500" selected={st.color === 'bg-blue-500'}>Blue (Biru)</option>
+                      <option value="bg-purple-500" selected={st.color === 'bg-purple-500'}>Purple (Ungu)</option>
+                      <option value="bg-emerald-500" selected={st.color === 'bg-emerald-500'}>Emerald (Hijau)</option>
+                      <option value="bg-rose-500" selected={st.color === 'bg-rose-500'}>Rose (Merah - Gagal/Batal)</option>
+                      <option value="bg-cyan-500" selected={st.color === 'bg-cyan-500'}>Cyan (Biru Muda)</option>
+                      <option value="bg-orange-500" selected={st.color === 'bg-orange-500'}>Orange (Oranye)</option>
+                      <option value="bg-slate-500" selected={st.color === 'bg-slate-500'}>Slate (Abu-abu)</option>
+                    </select>
+                  </td>
+                  <td class="py-3 px-3 text-right">
+                    {canManage && (
+                      <button
+                        type="button"
+                        class="delete-status-btn text-rose-500 hover:text-rose-700 font-semibold p-1 transition"
+                        title="Hapus status ini"
+                      >
+                        Hapus
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        {canManage && (
+          <div class="mt-6 flex flex-col sm:flex-row items-center justify-between gap-3 pt-4 border-t border-slate-100">
+            <button
+              type="button"
+              id="reset-status-btn"
+              class="text-xs text-slate-400 hover:text-slate-600 underline font-medium"
+            >
+              Kembalikan ke Default
+            </button>
+            <button
+              type="button"
+              id="save-statuses-btn"
+              class="w-full sm:w-auto px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs rounded-xl shadow-xs transition"
+            >
+              Simpan Semua Status
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  )}
+
+  <script define:vars={{ workspaceId: currentWorkspace?.id, defaultStatuses: DEFAULT_STATUSES }}>
+    const priorityForm = document.getElementById('priority-format-form');
+    if (priorityForm) {
+      priorityForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const saveBtn = document.getElementById('save-priority-btn');
+        if (saveBtn) {
+          saveBtn.disabled = true;
+          saveBtn.textContent = 'Menyimpan...';
+        }
+
+        const formData = new FormData(priorityForm);
+        const priority_format = formData.get('priority_format');
+
+        try {
+          const res = await fetch(`/api/workspaces/${workspaceId}/settings`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ priority_format }),
+          });
+
+          const isJson = res.headers.get('content-type')?.includes('application/json');
+          const data = isJson ? await res.json() : null;
+
+          if (!res.ok) {
+            throw new Error(data?.error || `Gagal menyimpan (Status ${res.status}). Pastikan SQL migration sudah dijalankan di Supabase.`);
+          }
+
+          alert('Format prioritas berhasil disimpan!');
+          window.location.reload();
+        } catch (err) {
+          alert(err.message);
+        } finally {
+          if (saveBtn) {
+            saveBtn.disabled = false;
+            saveBtn.textContent = 'Simpan Format Prioritas';
+          }
+        }
+      });
+    }
+
+    const tableBody = document.getElementById('status-table-body');
+    const addRowBtn = document.getElementById('add-status-row-btn');
+    const saveStatusesBtn = document.getElementById('save-statuses-btn');
+    const resetStatusesBtn = document.getElementById('reset-status-btn');
+
+    const bindDeleteBtn = (row) => {
+      const btn = row.querySelector('.delete-status-btn');
+      if (btn) {
+        btn.addEventListener('click', () => {
+          const totalRows = document.querySelectorAll('.status-row').length;
+          if (totalRows <= 1) {
+            alert('Minimal harus ada 1 status!');
+            return;
+          }
+          if (confirm('Yakin ingin menghapus kolom status ini? Tugas dengan status ini akan tetap ada namun kolomnya tidak muncul jika tidak dipindahkan.')) {
+            row.remove();
+          }
+        });
+      }
+    };
+
+    document.querySelectorAll('.status-row').forEach(bindDeleteBtn);
+
+    if (addRowBtn && tableBody) {
+      addRowBtn.addEventListener('click', () => {
+        const rawLabel = prompt('Masukkan nama status baru (misal: Failed, Canceled, Testing):');
+        if (!rawLabel || !rawLabel.trim()) return;
+
+        const label = rawLabel.trim();
+        const key = label.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+
+        if (!key) {
+          alert('Nama status tidak valid');
+          return;
+        }
+
+        // Cek duplicate key
+        const existingKeys = Array.from(document.querySelectorAll('.status-row')).map((r) => r.getAttribute('data-key'));
+        if (existingKeys.includes(key)) {
+          alert(`Status dengan key '${key}' sudah ada!`);
+          return;
+        }
+
+        const tr = document.createElement('tr');
+        tr.className = 'status-row';
+        tr.setAttribute('data-key', key);
+        tr.innerHTML = `
+          <td class="py-3 px-3">
+            <span class="status-key font-mono text-[11px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded">
+              ${key}
+            </span>
+          </td>
+          <td class="py-3 px-3">
+            <input
+              type="text"
+              class="status-label-input w-full max-w-[200px] px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-semibold text-slate-700 focus:outline-none focus:border-indigo-500"
+              value="${label}"
+            />
+          </td>
+          <td class="py-3 px-3">
+            <select class="status-color-select px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-700 focus:outline-none">
+              <option value="bg-amber-500">Amber (Kuning)</option>
+              <option value="bg-blue-500">Blue (Biru)</option>
+              <option value="bg-purple-500">Purple (Ungu)</option>
+              <option value="bg-emerald-500">Emerald (Hijau)</option>
+              <option value="bg-rose-500" selected>Rose (Merah - Gagal/Batal)</option>
+              <option value="bg-cyan-500">Cyan (Biru Muda)</option>
+              <option value="bg-orange-500">Orange (Oranye)</option>
+              <option value="bg-slate-500">Slate (Abu-abu)</option>
+            </select>
+          </td>
+          <td class="py-3 px-3 text-right">
+            <button
+              type="button"
+              class="delete-status-btn text-rose-500 hover:text-rose-700 font-semibold p-1 transition"
+              title="Hapus status ini"
+            >
+              Hapus
+            </button>
+          </td>
+        `;
+
+        tableBody.appendChild(tr);
+        bindDeleteBtn(tr);
+      });
+    }
+
+    if (resetStatusesBtn) {
+      resetStatusesBtn.addEventListener('click', () => {
+        if (!confirm('Kembalikan konfigurasi status ke 4 kolom default (To Do, In Progress, Review, Done)?')) return;
+        tableBody.innerHTML = '';
+        defaultStatuses.forEach((st) => {
+          const tr = document.createElement('tr');
+          tr.className = 'status-row';
+          tr.setAttribute('data-key', st.key);
+          tr.innerHTML = `
+            <td class="py-3 px-3">
+              <span class="status-key font-mono text-[11px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded">
+                ${st.key}
+              </span>
+            </td>
+            <td class="py-3 px-3">
+              <input
+                type="text"
+                class="status-label-input w-full max-w-[200px] px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-semibold text-slate-700 focus:outline-none focus:border-indigo-500"
+                value="${st.label}"
+              />
+            </td>
+            <td class="py-3 px-3">
+              <select class="status-color-select px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-700 focus:outline-none">
+                <option value="bg-amber-500" ${st.color === 'bg-amber-500' ? 'selected' : ''}>Amber (Kuning)</option>
+                <option value="bg-blue-500" ${st.color === 'bg-blue-500' ? 'selected' : ''}>Blue (Biru)</option>
+                <option value="bg-purple-500" ${st.color === 'bg-purple-500' ? 'selected' : ''}>Purple (Ungu)</option>
+                <option value="bg-emerald-500" ${st.color === 'bg-emerald-500' ? 'selected' : ''}>Emerald (Hijau)</option>
+                <option value="bg-rose-500" ${st.color === 'bg-rose-500' ? 'selected' : ''}>Rose (Merah - Gagal/Batal)</option>
+                <option value="bg-cyan-500" ${st.color === 'bg-cyan-500' ? 'selected' : ''}>Cyan (Biru Muda)</option>
+                <option value="bg-orange-500" ${st.color === 'bg-orange-500' ? 'selected' : ''}>Orange (Oranye)</option>
+                <option value="bg-slate-500" ${st.color === 'bg-slate-500' ? 'selected' : ''}>Slate (Abu-abu)</option>
+              </select>
+            </td>
+            <td class="py-3 px-3 text-right">
+              <button
+                type="button"
+                class="delete-status-btn text-rose-500 hover:text-rose-700 font-semibold p-1 transition"
+                title="Hapus status ini"
+              >
+                Hapus
+              </button>
+            </td>
+          `;
+          tableBody.appendChild(tr);
+          bindDeleteBtn(tr);
+        });
+      });
+    }
+
+    if (saveStatusesBtn) {
+      saveStatusesBtn.addEventListener('click', async () => {
+        const rows = document.querySelectorAll('.status-row');
+        if (rows.length === 0) {
+          alert('Minimal 1 status harus tersedia!');
+          return;
+        }
+
+        const statuses = Array.from(rows).map((row) => {
+          const key = row.getAttribute('data-key');
+          const label = row.querySelector('.status-label-input')?.value.trim() || key;
+          const color = row.querySelector('.status-color-select')?.value || 'bg-slate-500';
+          return { key, label, color };
+        });
+
+        saveStatusesBtn.disabled = true;
+        saveStatusesBtn.textContent = 'Menyimpan...';
+
+        try {
+          const res = await fetch(`/api/workspaces/${workspaceId}/settings`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ statuses }),
+          });
+
+          const isJson = res.headers.get('content-type')?.includes('application/json');
+          const data = isJson ? await res.json() : null;
+
+          if (!res.ok) {
+            throw new Error(data?.error || `Gagal menyimpan (Status ${res.status}). Pastikan SQL migration sudah dijalankan di Supabase.`);
+          }
+
+          alert('Daftar status berhasil diperbarui!');
+          window.location.reload();
+        } catch (err) {
+          alert(err.message);
+        } finally {
+          saveStatusesBtn.disabled = false;
+          saveStatusesBtn.textContent = 'Simpan Semua Status';
+        }
+      });
+    }
+  </script>
+</DashboardLayout>

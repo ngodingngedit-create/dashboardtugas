@@ -96,6 +96,13 @@ const pathname = Astro.url.pathname;
             <span class="text-base">📁</span> Kelola Workspace
           </a>
 
+          <a 
+            href={currentWorkspace ? `/dashboard/settings?workspace_id=${currentWorkspace.id}` : '/dashboard/settings'} 
+            class={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition ${pathname.startsWith('/dashboard/settings') ? 'bg-indigo-50 text-indigo-600 font-semibold' : 'text-slate-600 hover:bg-slate-50'}`}
+          >
+            <span class="text-base">⚙️</span> Settings
+          </a>
+
           {profile?.is_admin && (
             <a 
               href="/dashboard/admin" 

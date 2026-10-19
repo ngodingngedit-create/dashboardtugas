@@ -10,7 +10,7 @@ export const POST: APIRoute = async ({ request, cookies }) => {
 
   try {
     const body = await request.json();
-    const { workspace_id, title, description, priority, due_date } = body;
+    const { workspace_id, title, description, priority, status, due_date } = body;
 
     if (!workspace_id || !title) {
       return new Response(JSON.stringify({ error: 'Workspace dan Judul tugas wajib diisi' }), { status: 400 });
@@ -32,7 +32,7 @@ export const POST: APIRoute = async ({ request, cookies }) => {
         title,
         description: description || null,
         priority: priority || 'medium',
-        status: 'todo',
+        status: status || 'todo',
         due_date: due_date ? new Date(due_date).toISOString() : null,
         created_by: user.id,
       })

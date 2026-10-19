@@ -29,6 +29,19 @@ export interface Profile {
   updated_at: string
 }
 
+export type PriorityFormat = 'text' | 'numeric'
+
+export interface CustomStatus {
+  key: string
+  label: string
+  color: string
+}
+
+export interface WorkspaceSettings {
+  statuses?: CustomStatus[]
+  priority_format?: PriorityFormat
+}
+
 export interface Workspace {
   id: string
   name: string
@@ -38,6 +51,7 @@ export interface Workspace {
   created_by: string
   created_at: string
   updated_at: string
+  settings?: WorkspaceSettings | null
 }
 
 export interface WorkspaceMember {

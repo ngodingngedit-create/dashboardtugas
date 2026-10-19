@@ -2,6 +2,7 @@
 import DashboardLayout from '../../layouts/DashboardLayout.astro';
 import { createAstroSupabaseClient } from '../../lib/supabase';
 import { dueInfo } from '../../lib/due-date';
+import { formatPriority } from '../../lib/workspace-config';
 import type { Workspace } from '../../types/database';
 const supabase = createAstroSupabaseClient(Astro.request, Astro.cookies);
 const { data: { user } } = await supabase.auth.getUser();
@@ -57,7 +58,9 @@ if (workspaceIds.length > 0 && user?.id) {
               <div class="flex flex-wrap items-center gap-2 shrink-0">
                 {totalSub > 0 && (<span class="text-xs text-slate-400 font-medium">☑ {doneSub}/{totalSub}</span>)}
                 <span class="text-xs capitalize font-semibold px-2.5 py-1 rounded-lg bg-slate-100 text-slate-600">{String(task.status).replace('_', ' ')}</span>
-                <span class={`text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded-lg ${task.priority === 'urgent' ? 'bg-rose-50 text-rose-600' : task.priority === 'high' ? 'bg-orange-50 text-orange-600' : task.priority === 'medium' ? 'bg-blue-50 text-blue-600' : 'bg-slate-100 text-slate-600'}`}>{task.priority}</span>
+                <span class={`text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded-lg ${task.priority === 'urgent' ? 'bg-rose-50 text-rose-600' : task.priority === 'high' ? 'bg-orange-50 text-orange-600' : task.priority === 'medium' ? 'bg-blue-50 text-blue-600' : 'bg-slate-100 text-slate-600'}`}>
+                  {formatPriority(task.priority, task.workspace?.settings?.priority_format || 'text')}
+                </span>
               </div>
             </div>
           );
