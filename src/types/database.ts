@@ -25,6 +25,7 @@ export interface Profile {
   avatar_url: string | null
   bio: string | null
   is_admin: boolean
+  telegram_chat_id?: string | null
   created_at: string
   updated_at: string
 }

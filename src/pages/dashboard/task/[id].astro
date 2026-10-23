@@ -112,13 +112,22 @@ logPerf(`/dashboard/task/${taskId}`, perfTimings);
       <a href="/dashboard" class="text-xs font-semibold text-slate-500 hover:text-indigo-600 transition flex items-center gap-1 min-w-0">
         &larr; Kembali ke Board
       </a>
-      <button 
-        id="delete-task-btn" 
-        data-task-id={task.id}
-        class="text-xs font-semibold text-rose-500 hover:text-rose-700 transition cursor-pointer shrink-0"
-      >
-        Hapus Tugas
-      </button>
+      <div class="flex items-center gap-4 shrink-0">
+        <button
+          id="remind-task-btn"
+          type="button"
+          class="text-xs font-semibold text-indigo-600 hover:text-indigo-800 transition cursor-pointer disabled:opacity-60"
+        >
+          Ingatkan saya
+        </button>
+        <button 
+          id="delete-task-btn" 
+          data-task-id={task.id}
+          class="text-xs font-semibold text-rose-500 hover:text-rose-700 transition cursor-pointer shrink-0"
+        >
+          Hapus Tugas
+        </button>
+      </div>
     </div>
 
     <!-- Main Card -->
@@ -346,6 +355,27 @@ logPerf(`/dashboard/task/${taskId}`, perfTimings);
       }).catch((err) => {
         alert(err.message || 'Gagal mengirim komentar');
       }).finally(() => releaseBusy(form, btn));
+    });
+
+    // Ingatkan saya — kirim pengingat via n8n (server-side)
+    const remindBtn = document.getElementById('remind-task-btn');
+    remindBtn?.addEventListener('click', () => {
+      remindBtn.disabled = true;
+      const orig = remindBtn.textContent;
+      remindBtn.textContent = 'Mengirim...';
+      fetch('/api/remind', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ task_id: currentTaskId }),
+      }).then(async (res) => {
+        const d = await res.json().catch(() => ({}));
+        alert(d.message || (res.ok ? 'Pengingat dikirim' : 'Gagal mengirim pengingat'));
+      }).catch(() => {
+        alert('Tidak dapat terhubung ke server');
+      }).finally(() => {
+        remindBtn.disabled = false;
+        remindBtn.textContent = orig;
+      });
     });
 
     // Delete Task
