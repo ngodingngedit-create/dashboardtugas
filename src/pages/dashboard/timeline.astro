@@ -1,6 +1,12 @@
 ---
 import DashboardLayout from '../../layouts/DashboardLayout.astro';
 import { createAstroSupabaseClient } from '../../lib/supabase';
+import {
+  diffDaysJakarta,
+  formatJakartaDate,
+  getJakartaCurrentYearMonth,
+  toJakartaYMD,
+} from '../../lib/jakarta-time';
 import type { Workspace } from '../../types/database';
 
 const supabase = createAstroSupabaseClient(Astro.request, Astro.cookies);
@@ -21,11 +27,11 @@ const workspaces: Workspace[] = (memberWorkspaces || [])
   .filter(Boolean);
 const workspaceIds = workspaces.map((w) => w.id);
 
-// --- Bulan aktif dari query param ?month=YYYY-MM (default: bulan ini) ---
+// --- Bulan aktif: default mengikuti tanggal saat ini di Asia/Jakarta (WIB) ---
 const monthParam = Astro.url.searchParams.get('month');
-const now = new Date();
-let year = now.getFullYear();
-let month = now.getMonth(); // 0-based
+const currentJkt = getJakartaCurrentYearMonth();
+let year = currentJkt.year;
+let month = currentJkt.month - 1; // 0-based
 if (monthParam && /^\d{4}-\d{2}$/.test(monthParam)) {
   const [y, m] = monthParam.split('-').map(Number);
   if (m >= 1 && m <= 12) {
@@ -34,13 +40,13 @@ if (monthParam && /^\d{4}-\d{2}$/.test(monthParam)) {
   }
 }
 const monthStr = `${year}-${String(month + 1).padStart(2, '0')}`;
-const prev = new Date(year, month - 1, 1);
-const next = new Date(year, month + 1, 1);
-const prevStr = `${prev.getFullYear()}-${String(prev.getMonth() + 1).padStart(2, '0')}`;
-const nextStr = `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, '0')}`;
-const monthLabel = new Date(year, month, 1).toLocaleDateString('id-ID', { month: 'long', year: 'numeric' });
+const prev = new Date(Date.UTC(year, month - 1, 1));
+const next = new Date(Date.UTC(year, month + 1, 1));
+const prevStr = `${prev.getUTCFullYear()}-${String(prev.getUTCMonth() + 1).padStart(2, '0')}`;
+const nextStr = `${next.getUTCFullYear()}-${String(next.getUTCMonth() + 1).padStart(2, '0')}`;
+const monthLabel = formatJakartaDate(new Date(Date.UTC(year, month, 1)), { month: 'long', year: 'numeric' });
 
-// --- Fetch tugas dengan deadline pada rentang bulan ini (± minggu terlihat) ---
+// --- Fetch tugas dengan deadline pada rentang bulan ini (± buffer beberapa minggu) ---
 interface CalTask {
   id: string;
   title: string;
@@ -50,8 +56,9 @@ interface CalTask {
 }
 let tasks: CalTask[] = [];
 if (workspaceIds.length > 0) {
-  const rangeStart = new Date(year, month - 1, 1).toISOString();
-  const rangeEnd = new Date(year, month + 2, 1).toISOString();
+  // Rentang query longgar (UTC) agar mencakup batas tanggal WIB
+  const rangeStart = new Date(Date.UTC(year, month - 1, 1)).toISOString();
+  const rangeEnd = new Date(Date.UTC(year, month + 2, 1)).toISOString();
   const { data } = await supabase
     .from('tasks')
     .select('id, title, status, due_date, workspace:workspaces (name)')
@@ -63,67 +70,67 @@ if (workspaceIds.length > 0) {
   tasks = (data || []) as unknown as CalTask[];
 }
 
-// Kelompokkan per tanggal lokal (YYYY-MM-DD)
-const dayKey = (d: Date) =>
-  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+// Kelompokkan per tanggal kalender Asia/Jakarta (YYYY-MM-DD)
 const tasksByDay = new Map<string, CalTask[]>();
 for (const t of tasks) {
-  const key = dayKey(new Date(t.due_date));
+  const key = toJakartaYMD(t.due_date);
+  if (!key) continue;
   if (!tasksByDay.has(key)) tasksByDay.set(key, []);
   tasksByDay.get(key)!.push(t);
 }
 
-// --- Bangun grid kalender (minggu mulai Senin) ---
+// --- Bangun grid kalender (minggu mulai Senin, murni tanggal kalender) ---
 interface DayCell {
-  date: Date;
+  key: string;       // YYYY-MM-DD
+  dayNumber: number; // 1-31
   inMonth: boolean;
 }
-const firstDay = new Date(year, month, 1);
-// getDay(): 0=Minggu..6=Sabtu → offset Senin-first
-const startOffset = (firstDay.getDay() + 6) % 7;
-const daysInMonth = new Date(year, month + 1, 0).getDate();
+// Hari pertama bulan aktif: cari hari dalam minggu (0=Min..6=Sab)
+const firstDayUtc = new Date(Date.UTC(year, month, 1));
+const startOffset = (firstDayUtc.getUTCDay() + 6) % 7; // Senin-first
+const daysInMonth = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
 const totalCells = Math.ceil((startOffset + daysInMonth) / 7) * 7;
+
 const cells: DayCell[] = [];
 for (let i = 0; i < totalCells; i++) {
-  const date = new Date(year, month, 1 - startOffset + i);
-  cells.push({ date, inMonth: date.getMonth() === month });
+  const cellDate = new Date(Date.UTC(year, month, 1 - startOffset + i));
+  const cY = cellDate.getUTCFullYear();
+  const cM = cellDate.getUTCMonth();
+  const cD = cellDate.getUTCDate();
+  const key = `${cY}-${String(cM + 1).padStart(2, '0')}-${String(cD).padStart(2, '0')}`;
+  cells.push({
+    key,
+    dayNumber: cD,
+    inMonth: cY === year && cM === month,
+  });
 }
 
-const today = new Date();
-today.setHours(0, 0, 0, 0);
-const todayKey = dayKey(today);
+const todayKey = toJakartaYMD(new Date());
 
-// Warna chip per tugas: pill dengan aksen garis kiri + background lembut
+// Warna chip per tugas: selisih hari dihitung berbasis tanggal Jakarta (WIB)
 function chipClass(t: CalTask): string {
   if (t.status === 'done') return 'border-emerald-400 bg-emerald-50 text-emerald-700 hover:bg-emerald-100';
-  const due = new Date(t.due_date);
-  due.setHours(0, 0, 0, 0);
-  const diff = Math.round((due.getTime() - today.getTime()) / 86400000);
-  if (diff < 0) return 'border-rose-400 bg-rose-50 text-rose-700 hover:bg-rose-100';
+  const diff = diffDaysJakarta(t.due_date);
+  if (diff !== null && diff < 0) return 'border-rose-400 bg-rose-50 text-rose-700 hover:bg-rose-100';
   if (diff === 0) return 'border-amber-400 bg-amber-50 text-amber-800 hover:bg-amber-100';
   return 'border-blue-400 bg-blue-50 text-blue-700 hover:bg-blue-100';
 }
 function dotClass(t: CalTask): string {
   if (t.status === 'done') return 'bg-emerald-500';
-  const due = new Date(t.due_date);
-  due.setHours(0, 0, 0, 0);
-  const diff = Math.round((due.getTime() - today.getTime()) / 86400000);
-  if (diff < 0) return 'bg-rose-500';
+  const diff = diffDaysJakarta(t.due_date);
+  if (diff !== null && diff < 0) return 'bg-rose-500';
   if (diff === 0) return 'bg-amber-500';
   return 'bg-blue-500';
 }
 
-// Ringkasan bulan aktif
-const monthTasks = tasks.filter((t) => {
-  const d = new Date(t.due_date);
-  return d.getFullYear() === year && d.getMonth() === month;
-});
+// Ringkasan bulan aktif (berbasis tanggal Jakarta)
+const monthPrefix = `${year}-${String(month + 1).padStart(2, '0')}-`;
+const monthTasks = tasks.filter((t) => toJakartaYMD(t.due_date).startsWith(monthPrefix));
 const monthDone = monthTasks.filter((t) => t.status === 'done').length;
 const monthOverdue = monthTasks.filter((t) => {
   if (t.status === 'done') return false;
-  const d = new Date(t.due_date);
-  d.setHours(0, 0, 0, 0);
-  return d.getTime() < today.getTime();
+  const diff = diffDaysJakarta(t.due_date);
+  return diff !== null && diff < 0;
 }).length;
 
 const weekDays = ['Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab', 'Min'];
@@ -140,11 +147,27 @@ const MAX_CHIPS = 2;
   currentWorkspace={null}
 >
   <div class="max-w-6xl mx-auto space-y-4 sm:space-y-5">
-    <!-- Header kalender -->
+    <!-- Header kalender + Indikator Jam 24 Jam Jakarta -->
     <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
       <div>
-        <h2 class="text-lg sm:text-xl font-bold text-slate-800 capitalize">{monthLabel}</h2>
-        <p class="text-xs text-slate-400 mt-0.5">
+        <div class="flex items-center gap-2 flex-wrap">
+          <h2 class="text-lg sm:text-xl font-bold text-slate-800 capitalize">{monthLabel}</h2>
+          <!-- Visual badge zona waktu Asia/Jakarta + jam live -->
+          <span
+            id="jakarta-clock-badge"
+            title="Waktu server disinkronkan ke zona Asia/Jakarta (24 jam WIB)"
+            class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-50 border border-emerald-200/70 text-emerald-700 text-[11px] font-semibold"
+          >
+            <span class="relative flex h-2 w-2">
+              <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+              <span class="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+            </span>
+            <span>WIB (UTC+7)</span>
+            <span class="text-emerald-400">•</span>
+            <span id="jakarta-live-clock" class="font-mono font-bold tracking-tight">--:--:--</span>
+          </span>
+        </div>
+        <p class="text-xs text-slate-400 mt-1">
           {monthTasks.length} deadline bulan ini
           {monthOverdue > 0 && <span class="text-rose-500 font-semibold"> • {monthOverdue} terlewat</span>}
           {monthDone > 0 && <span class="text-emerald-600 font-semibold"> • {monthDone} selesai</span>}
@@ -179,14 +202,20 @@ const MAX_CHIPS = 2;
         <!-- Grid tanggal: garis sejajar via divide, tinggi sel tetap -->
         <div class="grid grid-cols-7 divide-x divide-y divide-slate-100">
           {cells.map((cell) => {
-            const key = dayKey(cell.date);
-            const dayTasks = tasksByDay.get(key) || [];
-            const isToday = key === todayKey;
+            const dayTasks = tasksByDay.get(cell.key) || [];
+            const isToday = cell.key === todayKey;
             return (
               <div class={`min-w-0 h-20 sm:h-28 flex flex-col overflow-hidden px-1 pt-1 sm:px-1.5 sm:pt-1.5 ${cell.inMonth ? 'bg-white' : 'bg-slate-50/60'}`}>
-                <span class={`inline-flex items-center justify-center w-5 h-5 sm:w-6 sm:h-6 shrink-0 text-[10px] sm:text-xs font-semibold rounded-full ${isToday ? 'bg-indigo-600 text-white' : cell.inMonth ? 'text-slate-700' : 'text-slate-300'}`}>
-                  {cell.date.getDate()}
-                </span>
+                <div class="flex items-center justify-between">
+                  <span class={`inline-flex items-center justify-center w-5 h-5 sm:w-6 sm:h-6 shrink-0 text-[10px] sm:text-xs font-semibold rounded-full ${isToday ? 'bg-indigo-600 text-white shadow-xs' : cell.inMonth ? 'text-slate-700' : 'text-slate-300'}`}>
+                    {cell.dayNumber}
+                  </span>
+                  {isToday && (
+                    <span class="hidden md:inline-block text-[9px] font-bold text-indigo-600 uppercase tracking-wider px-1">
+                      Hari ini
+                    </span>
+                  )}
+                </div>
 
                 <!-- Chip tugas (desktop) -->
                 <div class="hidden sm:flex flex-col gap-1 mt-1 min-h-0 overflow-hidden">
@@ -220,13 +249,41 @@ const MAX_CHIPS = 2;
       </div>
     )}
 
-    <!-- Legenda -->
-    <div class="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[11px] font-semibold text-slate-500">
-      <span class="text-slate-400 uppercase tracking-wider text-[10px] font-bold">Legenda:</span>
-      <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-rose-500"></span> Terlewat</span>
-      <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-amber-500"></span> Hari ini</span>
-      <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-blue-500"></span> Akan datang</span>
-      <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-emerald-500"></span> Selesai</span>
+    <!-- Legenda + Info Zona Waktu -->
+    <div class="flex flex-wrap items-center justify-between gap-y-2 text-[11px] font-semibold text-slate-500 pt-1">
+      <div class="flex flex-wrap items-center gap-x-4 gap-y-1.5">
+        <span class="text-slate-400 uppercase tracking-wider text-[10px] font-bold">Legenda:</span>
+        <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-rose-500"></span> Terlewat</span>
+        <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-amber-500"></span> Hari ini</span>
+        <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-blue-500"></span> Akan datang</span>
+        <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-emerald-500"></span> Selesai</span>
+      </div>
+      <span class="text-[10px] text-slate-400 font-medium">
+        Zona Waktu: <strong class="text-slate-600 font-semibold">Asia/Jakarta (WIB • GMT+7)</strong> format 24 jam
+      </span>
     </div>
   </div>
+
+  <!-- Script Jam Digital Live 24 Jam Asia/Jakarta di klien -->
+  <script>
+    const clockEl = document.getElementById('jakarta-live-clock');
+    if (clockEl) {
+      const updateClock = () => {
+        try {
+          const formatter = new Intl.DateTimeFormat('id-ID', {
+            timeZone: 'Asia/Jakarta',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: false,
+          });
+          clockEl.textContent = formatter.format(new Date());
+        } catch {
+          clockEl.textContent = '--:--:--';
+        }
+      };
+      updateClock();
+      setInterval(updateClock, 1000);
+    }
+  </script>
 </DashboardLayout>
