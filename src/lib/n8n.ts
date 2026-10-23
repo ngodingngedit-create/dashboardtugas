@@ -20,8 +20,10 @@ export async function sendToN8n(path: string, payload: unknown): Promise<N8nResu
     return { ok: false, message: 'Path webhook tidak valid' };
   }
 
+  const prefix = import.meta.env.N8N_WEBHOOK_PREFIX === 'webhook-test' ? 'webhook-test' : 'webhook';
+
   try {
-    const res = await fetch(`${baseUrl.replace(/\/+$/, '')}/webhook/${path}`, {
+    const res = await fetch(`${baseUrl.replace(/\/+$/, '')}/${prefix}/${path}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey },
       body: JSON.stringify(payload),
